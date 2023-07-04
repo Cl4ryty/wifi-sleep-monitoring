@@ -14,8 +14,8 @@ estimate_plot_time_range = 60
 
 estimates_deque_length = round(estimate_plot_time_range / 2)
 
-breathing_rate = collections.deque(maxlen=estimates_deque_length)
-heart_rate = collections.deque(maxlen=estimates_deque_length)
+breathing_rate = collections.deque(maxlen=50*30)
+heart_rate = collections.deque(maxlen=50*30)
 
 app = pg.mkQApp("Live plotting")
 win = pg.GraphicsLayoutWidget(show=True, title="CSI plots")
@@ -41,23 +41,29 @@ heart_rate_curve = heart_rate_plot.plot()
 udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 udp_socket.bind((HOST, PORT))
 
-
+import sys
 def update():
-    data = udp_socket.recv(1024)
-    # update graph
-    msg, heart_rate_value, breathing_rate_value, l = data.decode("utf-8").split(';')
-    print("msg", msg)
-    print(l)
+    line = ""
+    try:
+        sys.stdin.buffer.flush()
+        line = sys.stdin.buffer.readline().decode('utf-8').replace("\n", "")
+    except:
+        pass  # might not be a utf-8 string!
 
-    heart_rate.append(float(heart_rate_value))
-    x = np.arange(len(heart_rate)) * 2 * -1
-    heart_rate_curve.setData(np.flip(x), np.array(heart_rate))
-    heart_rate_text.setText(text=heart_rate_value, color=(200, 200, 200))
+    if "Bandpass_test" in line:
+        msg, heart_rate_value, breathing_rate_value = line.split(',')
+        #msg, heart_rate_value, breathing_rate_value = data.decode("utf-8").split(',')
 
-    breathing_rate.append(float(breathing_rate_value))
-    x = np.arange(len(breathing_rate)) * 2 * -1
-    breathing_rate_curve.setData(np.flip(x), np.array(breathing_rate))
-    breathing_rate_text.setText(text=breathing_rate_value, color=(200, 200, 200))
+
+        heart_rate.append(float(heart_rate_value))
+        x = np.arange(len(heart_rate)) * 2 * -1
+        heart_rate_curve.setData(np.flip(x), np.array(heart_rate))
+        #heart_rate_text.setText(text=heart_rate_value, color=(200, 200, 200))
+
+        breathing_rate.append(float(breathing_rate_value))
+        x = np.arange(len(breathing_rate)) * 2 * -1
+        breathing_rate_curve.setData(np.flip(x), np.array(breathing_rate))
+    #breathing_rate_text.setText(text=breathing_rate_value, color=(200, 200, 200))
 
 
 
