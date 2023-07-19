@@ -23,4 +23,12 @@ menu "Example Configuration"
         default 4
         help
             Max number of the STA connects to AP.
+
+    config CONFIG_ESP_BASE_MAC_ADDRESS
+        string "The base MAC address of the ESP"
+        default "0x"
+        help
+            Max number of the STA connects to AP.
+
+            
 endmenu

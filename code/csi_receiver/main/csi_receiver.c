@@ -3,7 +3,6 @@
 #include <sys/unistd.h>
 #include <sys/stat.h>
 
-#include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_mac.h"
@@ -12,6 +11,7 @@
 #include "esp_err.h"
 #include "esp_log.h"
 #include "nvs_flash.h"
+#include "esp_timer.h"
 
 #include "esp_vfs_fat.h"
 #include "driver/sdspi_host.h"
@@ -24,11 +24,16 @@
 
 #include "rom/ets_sys.h"
 
-
 #include "lwip/sockets.h"
 #include <lwip/netdb.h>
 
 #include "math.h"
+#include "float.h"
+
+#include "esp_dsp.h"
+#include "utilities.c"
+#include "using_eigen.h"
+#include "fft.h"
 
 /* The examples use WiFi configuration that you can set via project configuration menu.
 
@@ -40,8 +45,14 @@
 #define EXAMPLE_ESP_WIFI_CHANNEL   CONFIG_ESP_WIFI_CHANNEL
 #define EXAMPLE_MAX_STA_CONN       CONFIG_ESP_MAX_STA_CONN
 
-static const char *TAG = "wifi softAP";  // TODO change to something more appropriate
-static QueueHandle_t g_csi_info_queue    = NULL;
+uint8_t customBaseMAC[] = {0x0E, 0x0E, 0x0E, 0x0E, 0x0E, 0x0D};
+char csi_sender_mac[] = {0x01, 0x0a, 0x0a, 0x0a, 0x0a, 0x0a};
+
+
+
+
+static const char *TAG = "csi receiver";  // TODO change to something more appropriate
+static QueueHandle_t g_csi_info_queue = NULL;
 
 // defines for UDP broadcast
 #define HOST_IP_ADDR "192.168.4.255" // broadcastp address for the standard AP-network
@@ -53,9 +64,10 @@ static QueueHandle_t g_csi_info_queue    = NULL;
 
 #define CSI_RATE 50 // number of expected samples per second
 #define BROADCAST_RATE 0.5 // rate in Hz -> every 2 seconds
-#define TIME_RANGE_TO_KEEP 2 // in seconds
+#define TIME_RANGE_TO_KEEP 30 // in seconds
 
 #define MAX_NUMBER_OF_SAMPLES_KEPT  TIME_RANGE_TO_KEEP*CSI_RATE
+#define SECONDS_TO_MICROSECONDS 1000000
 
 // uncomment the next line to enable logging the raw CSI to the serial output of the ESP
 // #define PRINT_CSI_TO_SERIAL
@@ -67,11 +79,11 @@ static QueueHandle_t g_csi_info_queue    = NULL;
     // defines for using the sd card
     #define MOUNT_POINT "/sdcard"
 
-    #define SPI_DMA_CHAN    1
-    #define PIN_NUM_MISO 2
-    #define PIN_NUM_MOSI 15
-    #define PIN_NUM_CLK  14
-    #define PIN_NUM_CS   13
+    #define SPI_DMA_CHAN SPI_DMA_CH_AUTO
+    #define PIN_NUM_MISO 13
+    #define PIN_NUM_MOSI 11
+    #define PIN_NUM_CLK  12
+    #define PIN_NUM_CS   46
 
     #define MAX_NAME_LEN 32
 
@@ -84,69 +96,64 @@ static QueueHandle_t g_csi_info_queue    = NULL;
     #define WRITE_FILE_AFTER_RECEIVED_CSI_NUMBER MAX_NUMBER_OF_SAMPLES_KEPT
 #endif
 
+#define BREATH_LOWER_FREQUENCY_BOUND    0.1
+#define BREATH_UPPER_FREQUENCY_BOUND    0.5
+#define HEART_LOWER_FREQUENCY_BOUND     0.75
+#define HEART_UPPER_FREQUENCY_BOUND     2.0
+
 // filters for sampling frequency of 50Hz
 #define NUMBER_COEFFICIENTS 3
 float breathing_bandpass_coefficients[2][NUMBER_COEFFICIENTS] = {{0.024521609249465892, 0.0, -0.024521609249465892}, {1.0, -1.9501864631153991, 0.9509567815010684}}; //  b and a
 float heart_bandpass_coefficients[2][NUMBER_COEFFICIENTS] = {{0.07295965726826666, 0.0, -0.07295965726826666}, {1.0, -1.8321199891810072, 0.8540806854634666}};
 
-
+int fft_count = 1024;
+// these frequencies have been precomputed for a bin count of 1024 in order to reduce online computations
+// if you want to use a different bin count you need to update these too or write code to calculate these on the go
+float fft_frequencies[] = {0.0, 0.048828125, 0.09765625, 0.146484375, 0.1953125, 0.244140625, 0.29296875, 0.341796875, 0.390625, 0.439453125, 0.48828125, 0.537109375, 0.5859375, 0.634765625, 0.68359375, 0.732421875, 0.78125, 0.830078125, 0.87890625, 0.927734375, 0.9765625, 1.025390625, 1.07421875, 1.123046875, 1.171875, 1.220703125, 1.26953125, 1.318359375, 1.3671875, 1.416015625, 1.46484375, 1.513671875, 1.5625, 1.611328125, 1.66015625, 1.708984375, 1.7578125, 1.806640625, 1.85546875, 1.904296875, 1.953125, 2.001953125, 2.05078125, 2.099609375, 2.1484375, 2.197265625, 2.24609375, 2.294921875, 2.34375, 2.392578125, 2.44140625, 2.490234375, 2.5390625, 2.587890625, 2.63671875, 2.685546875, 2.734375, 2.783203125, 2.83203125, 2.880859375, 2.9296875, 2.978515625, 3.02734375, 3.076171875, 3.125, 3.173828125, 3.22265625, 3.271484375, 3.3203125, 3.369140625, 3.41796875, 3.466796875, 3.515625, 3.564453125, 3.61328125, 3.662109375, 3.7109375, 3.759765625, 3.80859375, 3.857421875, 3.90625, 3.955078125, 4.00390625, 4.052734375, 4.1015625, 4.150390625, 4.19921875, 4.248046875, 4.296875, 4.345703125, 4.39453125, 4.443359375, 4.4921875, 4.541015625, 4.58984375, 4.638671875, 4.6875, 4.736328125, 4.78515625, 4.833984375, 4.8828125, 4.931640625, 4.98046875, 5.029296875, 5.078125, 5.126953125, 5.17578125, 5.224609375, 5.2734375, 5.322265625, 5.37109375, 5.419921875, 5.46875, 5.517578125, 5.56640625, 5.615234375, 5.6640625, 5.712890625, 5.76171875, 5.810546875, 5.859375, 5.908203125, 5.95703125, 6.005859375, 6.0546875, 6.103515625, 6.15234375, 6.201171875, 6.25, 6.298828125, 6.34765625, 6.396484375, 6.4453125, 6.494140625, 6.54296875, 6.591796875, 6.640625, 6.689453125, 6.73828125, 6.787109375, 6.8359375, 6.884765625, 6.93359375, 6.982421875, 7.03125, 7.080078125, 7.12890625, 7.177734375, 7.2265625, 7.275390625, 7.32421875, 7.373046875, 7.421875, 7.470703125, 7.51953125, 7.568359375, 7.6171875, 7.666015625, 7.71484375, 7.763671875, 7.8125, 7.861328125, 7.91015625, 7.958984375, 8.0078125, 8.056640625, 8.10546875, 8.154296875, 8.203125, 8.251953125, 8.30078125, 8.349609375, 8.3984375, 8.447265625, 8.49609375, 8.544921875, 8.59375, 8.642578125, 8.69140625, 8.740234375, 8.7890625, 8.837890625, 8.88671875, 8.935546875, 8.984375, 9.033203125, 9.08203125, 9.130859375, 9.1796875, 9.228515625, 9.27734375, 9.326171875, 9.375, 9.423828125, 9.47265625, 9.521484375, 9.5703125, 9.619140625, 9.66796875, 9.716796875, 9.765625, 9.814453125, 9.86328125, 9.912109375, 9.9609375, 10.009765625, 10.05859375, 10.107421875, 10.15625, 10.205078125, 10.25390625, 10.302734375, 10.3515625, 10.400390625, 10.44921875, 10.498046875, 10.546875, 10.595703125, 10.64453125, 10.693359375, 10.7421875, 10.791015625, 10.83984375, 10.888671875, 10.9375, 10.986328125, 11.03515625, 11.083984375, 11.1328125, 11.181640625, 11.23046875, 11.279296875, 11.328125, 11.376953125, 11.42578125, 11.474609375, 11.5234375, 11.572265625, 11.62109375, 11.669921875, 11.71875, 11.767578125, 11.81640625, 11.865234375, 11.9140625, 11.962890625, 12.01171875, 12.060546875, 12.109375, 12.158203125, 12.20703125, 12.255859375, 12.3046875, 12.353515625, 12.40234375, 12.451171875, 12.5, 12.548828125, 12.59765625, 12.646484375, 12.6953125, 12.744140625, 12.79296875, 12.841796875, 12.890625, 12.939453125, 12.98828125, 13.037109375, 13.0859375, 13.134765625, 13.18359375, 13.232421875, 13.28125, 13.330078125, 13.37890625, 13.427734375, 13.4765625, 13.525390625, 13.57421875, 13.623046875, 13.671875, 13.720703125, 13.76953125, 13.818359375, 13.8671875, 13.916015625, 13.96484375, 14.013671875, 14.0625, 14.111328125, 14.16015625, 14.208984375, 14.2578125, 14.306640625, 14.35546875, 14.404296875, 14.453125, 14.501953125, 14.55078125, 14.599609375, 14.6484375, 14.697265625, 14.74609375, 14.794921875, 14.84375, 14.892578125, 14.94140625, 14.990234375, 15.0390625, 15.087890625, 15.13671875, 15.185546875, 15.234375, 15.283203125, 15.33203125, 15.380859375, 15.4296875, 15.478515625, 15.52734375, 15.576171875, 15.625, 15.673828125, 15.72265625, 15.771484375, 15.8203125, 15.869140625, 15.91796875, 15.966796875, 16.015625, 16.064453125, 16.11328125, 16.162109375, 16.2109375, 16.259765625, 16.30859375, 16.357421875, 16.40625, 16.455078125, 16.50390625, 16.552734375, 16.6015625, 16.650390625, 16.69921875, 16.748046875, 16.796875, 16.845703125, 16.89453125, 16.943359375, 16.9921875, 17.041015625, 17.08984375, 17.138671875, 17.1875, 17.236328125, 17.28515625, 17.333984375, 17.3828125, 17.431640625, 17.48046875, 17.529296875, 17.578125, 17.626953125, 17.67578125, 17.724609375, 17.7734375, 17.822265625, 17.87109375, 17.919921875, 17.96875, 18.017578125, 18.06640625, 18.115234375, 18.1640625, 18.212890625, 18.26171875, 18.310546875, 18.359375, 18.408203125, 18.45703125, 18.505859375, 18.5546875, 18.603515625, 18.65234375, 18.701171875, 18.75, 18.798828125, 18.84765625, 18.896484375, 18.9453125, 18.994140625, 19.04296875, 19.091796875, 19.140625, 19.189453125, 19.23828125, 19.287109375, 19.3359375, 19.384765625, 19.43359375, 19.482421875, 19.53125, 19.580078125, 19.62890625, 19.677734375, 19.7265625, 19.775390625, 19.82421875, 19.873046875, 19.921875, 19.970703125, 20.01953125, 20.068359375, 20.1171875, 20.166015625, 20.21484375, 20.263671875, 20.3125, 20.361328125, 20.41015625, 20.458984375, 20.5078125, 20.556640625, 20.60546875, 20.654296875, 20.703125, 20.751953125, 20.80078125, 20.849609375, 20.8984375, 20.947265625, 20.99609375, 21.044921875, 21.09375, 21.142578125, 21.19140625, 21.240234375, 21.2890625, 21.337890625, 21.38671875, 21.435546875, 21.484375, 21.533203125, 21.58203125, 21.630859375, 21.6796875, 21.728515625, 21.77734375, 21.826171875, 21.875, 21.923828125, 21.97265625, 22.021484375, 22.0703125, 22.119140625, 22.16796875, 22.216796875, 22.265625, 22.314453125, 22.36328125, 22.412109375, 22.4609375, 22.509765625, 22.55859375, 22.607421875, 22.65625, 22.705078125, 22.75390625, 22.802734375, 22.8515625, 22.900390625, 22.94921875, 22.998046875, 23.046875, 23.095703125, 23.14453125, 23.193359375, 23.2421875, 23.291015625, 23.33984375, 23.388671875, 23.4375, 23.486328125, 23.53515625, 23.583984375, 23.6328125, 23.681640625, 23.73046875, 23.779296875, 23.828125, 23.876953125, 23.92578125, 23.974609375, 24.0234375, 24.072265625, 24.12109375, 24.169921875, 24.21875, 24.267578125, 24.31640625, 24.365234375, 24.4140625, 24.462890625, 24.51171875, 24.560546875, 24.609375, 24.658203125, 24.70703125, 24.755859375, 24.8046875, 24.853515625, 24.90234375, 24.951171875, -25.0, -24.951171875, -24.90234375, -24.853515625, -24.8046875, -24.755859375, -24.70703125, -24.658203125, -24.609375, -24.560546875, -24.51171875, -24.462890625, -24.4140625, -24.365234375, -24.31640625, -24.267578125, -24.21875, -24.169921875, -24.12109375, -24.072265625, -24.0234375, -23.974609375, -23.92578125, -23.876953125, -23.828125, -23.779296875, -23.73046875, -23.681640625, -23.6328125, -23.583984375, -23.53515625, -23.486328125, -23.4375, -23.388671875, -23.33984375, -23.291015625, -23.2421875, -23.193359375, -23.14453125, -23.095703125, -23.046875, -22.998046875, -22.94921875, -22.900390625, -22.8515625, -22.802734375, -22.75390625, -22.705078125, -22.65625, -22.607421875, -22.55859375, -22.509765625, -22.4609375, -22.412109375, -22.36328125, -22.314453125, -22.265625, -22.216796875, -22.16796875, -22.119140625, -22.0703125, -22.021484375, -21.97265625, -21.923828125, -21.875, -21.826171875, -21.77734375, -21.728515625, -21.6796875, -21.630859375, -21.58203125, -21.533203125, -21.484375, -21.435546875, -21.38671875, -21.337890625, -21.2890625, -21.240234375, -21.19140625, -21.142578125, -21.09375, -21.044921875, -20.99609375, -20.947265625, -20.8984375, -20.849609375, -20.80078125, -20.751953125, -20.703125, -20.654296875, -20.60546875, -20.556640625, -20.5078125, -20.458984375, -20.41015625, -20.361328125, -20.3125, -20.263671875, -20.21484375, -20.166015625, -20.1171875, -20.068359375, -20.01953125, -19.970703125, -19.921875, -19.873046875, -19.82421875, -19.775390625, -19.7265625, -19.677734375, -19.62890625, -19.580078125, -19.53125, -19.482421875, -19.43359375, -19.384765625, -19.3359375, -19.287109375, -19.23828125, -19.189453125, -19.140625, -19.091796875, -19.04296875, -18.994140625, -18.9453125, -18.896484375, -18.84765625, -18.798828125, -18.75, -18.701171875, -18.65234375, -18.603515625, -18.5546875, -18.505859375, -18.45703125, -18.408203125, -18.359375, -18.310546875, -18.26171875, -18.212890625, -18.1640625, -18.115234375, -18.06640625, -18.017578125, -17.96875, -17.919921875, -17.87109375, -17.822265625, -17.7734375, -17.724609375, -17.67578125, -17.626953125, -17.578125, -17.529296875, -17.48046875, -17.431640625, -17.3828125, -17.333984375, -17.28515625, -17.236328125, -17.1875, -17.138671875, -17.08984375, -17.041015625, -16.9921875, -16.943359375, -16.89453125, -16.845703125, -16.796875, -16.748046875, -16.69921875, -16.650390625, -16.6015625, -16.552734375, -16.50390625, -16.455078125, -16.40625, -16.357421875, -16.30859375, -16.259765625, -16.2109375, -16.162109375, -16.11328125, -16.064453125, -16.015625, -15.966796875, -15.91796875, -15.869140625, -15.8203125, -15.771484375, -15.72265625, -15.673828125, -15.625, -15.576171875, -15.52734375, -15.478515625, -15.4296875, -15.380859375, -15.33203125, -15.283203125, -15.234375, -15.185546875, -15.13671875, -15.087890625, -15.0390625, -14.990234375, -14.94140625, -14.892578125, -14.84375, -14.794921875, -14.74609375, -14.697265625, -14.6484375, -14.599609375, -14.55078125, -14.501953125, -14.453125, -14.404296875, -14.35546875, -14.306640625, -14.2578125, -14.208984375, -14.16015625, -14.111328125, -14.0625, -14.013671875, -13.96484375, -13.916015625, -13.8671875, -13.818359375, -13.76953125, -13.720703125, -13.671875, -13.623046875, -13.57421875, -13.525390625, -13.4765625, -13.427734375, -13.37890625, -13.330078125, -13.28125, -13.232421875, -13.18359375, -13.134765625, -13.0859375, -13.037109375, -12.98828125, -12.939453125, -12.890625, -12.841796875, -12.79296875, -12.744140625, -12.6953125, -12.646484375, -12.59765625, -12.548828125, -12.5, -12.451171875, -12.40234375, -12.353515625, -12.3046875, -12.255859375, -12.20703125, -12.158203125, -12.109375, -12.060546875, -12.01171875, -11.962890625, -11.9140625, -11.865234375, -11.81640625, -11.767578125, -11.71875, -11.669921875, -11.62109375, -11.572265625, -11.5234375, -11.474609375, -11.42578125, -11.376953125, -11.328125, -11.279296875, -11.23046875, -11.181640625, -11.1328125, -11.083984375, -11.03515625, -10.986328125, -10.9375, -10.888671875, -10.83984375, -10.791015625, -10.7421875, -10.693359375, -10.64453125, -10.595703125, -10.546875, -10.498046875, -10.44921875, -10.400390625, -10.3515625, -10.302734375, -10.25390625, -10.205078125, -10.15625, -10.107421875, -10.05859375, -10.009765625, -9.9609375, -9.912109375, -9.86328125, -9.814453125, -9.765625, -9.716796875, -9.66796875, -9.619140625, -9.5703125, -9.521484375, -9.47265625, -9.423828125, -9.375, -9.326171875, -9.27734375, -9.228515625, -9.1796875, -9.130859375, -9.08203125, -9.033203125, -8.984375, -8.935546875, -8.88671875, -8.837890625, -8.7890625, -8.740234375, -8.69140625, -8.642578125, -8.59375, -8.544921875, -8.49609375, -8.447265625, -8.3984375, -8.349609375, -8.30078125, -8.251953125, -8.203125, -8.154296875, -8.10546875, -8.056640625, -8.0078125, -7.958984375, -7.91015625, -7.861328125, -7.8125, -7.763671875, -7.71484375, -7.666015625, -7.6171875, -7.568359375, -7.51953125, -7.470703125, -7.421875, -7.373046875, -7.32421875, -7.275390625, -7.2265625, -7.177734375, -7.12890625, -7.080078125, -7.03125, -6.982421875, -6.93359375, -6.884765625, -6.8359375, -6.787109375, -6.73828125, -6.689453125, -6.640625, -6.591796875, -6.54296875, -6.494140625, -6.4453125, -6.396484375, -6.34765625, -6.298828125, -6.25, -6.201171875, -6.15234375, -6.103515625, -6.0546875, -6.005859375, -5.95703125, -5.908203125, -5.859375, -5.810546875, -5.76171875, -5.712890625, -5.6640625, -5.615234375, -5.56640625, -5.517578125, -5.46875, -5.419921875, -5.37109375, -5.322265625, -5.2734375, -5.224609375, -5.17578125, -5.126953125, -5.078125, -5.029296875, -4.98046875, -4.931640625, -4.8828125, -4.833984375, -4.78515625, -4.736328125, -4.6875, -4.638671875, -4.58984375, -4.541015625, -4.4921875, -4.443359375, -4.39453125, -4.345703125, -4.296875, -4.248046875, -4.19921875, -4.150390625, -4.1015625, -4.052734375, -4.00390625, -3.955078125, -3.90625, -3.857421875, -3.80859375, -3.759765625, -3.7109375, -3.662109375, -3.61328125, -3.564453125, -3.515625, -3.466796875, -3.41796875, -3.369140625, -3.3203125, -3.271484375, -3.22265625, -3.173828125, -3.125, -3.076171875, -3.02734375, -2.978515625, -2.9296875, -2.880859375, -2.83203125, -2.783203125, -2.734375, -2.685546875, -2.63671875, -2.587890625, -2.5390625, -2.490234375, -2.44140625, -2.392578125, -2.34375, -2.294921875, -2.24609375, -2.197265625, -2.1484375, -2.099609375, -2.05078125, -2.001953125, -1.953125, -1.904296875, -1.85546875, -1.806640625, -1.7578125, -1.708984375, -1.66015625, -1.611328125, -1.5625, -1.513671875, -1.46484375, -1.416015625, -1.3671875, -1.318359375, -1.26953125, -1.220703125, -1.171875, -1.123046875, -1.07421875, -1.025390625, -0.9765625, -0.927734375, -0.87890625, -0.830078125, -0.78125, -0.732421875, -0.68359375, -0.634765625, -0.5859375, -0.537109375, -0.48828125, -0.439453125, -0.390625, -0.341796875, -0.29296875, -0.244140625, -0.1953125, -0.146484375, -0.09765625, -0.048828125};
+int fft_every_x_seconds = 10;
+unsigned next_fft_timestamp = 30 * SECONDS_TO_MICROSECONDS; // start after 30 seconds to give the ESPs some time to start sending/receiving
 
 float (*amplitude_array)[MAX_NUMBER_OF_SAMPLES_KEPT][NUMBER_SUBCARRIERS];
+// float amplitude_array[MAX_NUMBER_OF_SAMPLES_KEPT];
 unsigned timestamp_array[MAX_NUMBER_OF_SAMPLES_KEPT];
 static int16_t current_first_element = -1;
 static int16_t current_last_element = -1;
+
+float filtered_breath[MAX_NUMBER_OF_SAMPLES_KEPT];
+float filtered_heart[MAX_NUMBER_OF_SAMPLES_KEPT];
 
 float amplitude_mean;
 float previous_amplitude_hat[NUMBER_SUBCARRIERS];
 float sti_array[MAX_NUMBER_OF_SAMPLES_KEPT];
 
-
-// used for easy definition of things to broadcast
-typedef size_t (*functype)(char *buffer, size_t len);
-typedef struct
-{
-    size_t len;
-    size_t elements;
-    functype *list;
-} FunctionList;
-
 FunctionList broadcast_functions;
-
-typedef struct
-{
-    float *a_coefficients;
-    float *b_coefficients;
-    int number_coefficients;
-    float *last_inputs;
-    float *last_outputs;
-    int last_position;
-    float out;
-    int received_inputs;
-} BandpassIIRFilter;
 
 BandpassIIRFilter breathing_filter;
 BandpassIIRFilter heart_filter;
 
+MAC_struct MAC_breath;
+Features breath_features;
+POI_List breath_pois;
 
-void bandpass_filter_initialize(BandpassIIRFilter *f, float *b_coefficients, float *a_coefficients, int number_coefficients){
-    ESP_LOGI(TAG, "got here");
-    printf("t");
-    printf("hello");
-    f->number_coefficients = number_coefficients;
-    f->b_coefficients = b_coefficients;
-    f->a_coefficients = a_coefficients;
-    
-    f->last_inputs = malloc(number_coefficients * sizeof(float));
-    f->last_outputs = malloc(number_coefficients * sizeof(float));
-    for(int i=0; i<number_coefficients; i++){
-        f->last_inputs[i] = 0;
-        f->last_outputs[i] = 0;
+MAC_struct MAC_heart;
+Features heart_features;
+POI_List heart_pois;
+
+bool first_run = true;
+float MRC_ratios_breath[NUMBER_SUBCARRIERS];
+float MRC_ratios_heart[NUMBER_SUBCARRIERS];
+float MRC_scalar_breath = 1;
+float MRC_scalar_heart = 1;
+
+
+float calculate_variance(float *samples, int samples_length, float mean){ // calculates over the whole sample array
+    float result = 0;
+    for(int i=0; i<samples_length; i++){
+        result += (samples[i] - mean);
     }
-    f->out = 0;
-    f->received_inputs = 0;
-    f->last_position = 0;
+    result = result / samples_length;
+    return result;
 }
-
 
 // TODO
 void bandpass_filter_free(BandpassIIRFilter *f){
@@ -154,80 +161,28 @@ void bandpass_filter_free(BandpassIIRFilter *f){
     free(f->last_outputs);
 }
 
-void bandpass_filter_apply(BandpassIIRFilter *f, float input){
-    
-    if(f->received_inputs+1 > f->number_coefficients)
-    {
-        f->received_inputs++;   
-    }
-    
-    float out = f->b_coefficients[0] * input;
-
-    for(int i=1; i<f->number_coefficients; i++)
-    {
-        int index = f->last_position - i + 1;
-        if(index < 0){
-            index = f->number_coefficients - 1;
-        }
-        out += f->b_coefficients[i] * f->last_inputs[index];
-        out -= f->a_coefficients[i] * f->last_outputs[index];
-    }
-
-    f->out = out;
-    int index = f->last_position+1;
-    if(index >= f->number_coefficients){
-        index = 0;
-    }
-    f->last_position = index;
-    f->last_outputs[index] = out;
-    f->last_inputs[index] = input;
-}
-
-
-void create_function_list(FunctionList *l, size_t initialSize){
-    l->list = malloc(initialSize*sizeof(functype));
-    l->len = initialSize;
-    l->elements = 0;
-}
-
-void append_to_function_list(FunctionList *l, functype function_to_append){
-    if(l->elements == l->len){
-        l->len *= 2;
-        l->list = realloc(l->list, l->len * sizeof(functype));
-    }
-    l->list[l->elements++] = function_to_append;
-}
-
-void arr_alloc(size_t x, size_t y, float(**aptr)[x][y])
-{
-  *aptr = malloc( sizeof(float[x][y]) ); // allocate a true 2D array
-  assert(*aptr != NULL);
-}
-
-
-
 size_t print_sti_to_buffer(char *buffer, size_t len){
     // sti values        
-    if(current_last_element >= current_first_element)
-    {
-        len += sprintf(buffer + len, "[%f", sti_array[current_first_element]);
-        for (int i = current_first_element+1; i <= current_last_element; i++) 
-        {
-            len += sprintf(buffer + len, ",%f", sti_array[i]);
-        }
-        len += sprintf(buffer + len, "]\n");
-    }
-    else
-    {
-        len += sprintf(buffer + len, "[%f", sti_array[current_first_element]);
-        for (int i = current_first_element+1; i < MAX_NUMBER_OF_SAMPLES_KEPT; i++) {
-            len += sprintf(buffer + len, ",%f", sti_array[i]);
-        }
-        for (int i = 0+1; i <= current_last_element; i++) {
-            len += sprintf(buffer + len, ",%f", sti_array[i]);
-        }
-        len += sprintf(buffer + len, "]\n");
-    }
+    // if(current_last_element >= current_first_element)
+    // {
+    //     len += sprintf(buffer + len, "[%f", sti_array[current_first_element]);
+    //     for (int i = current_first_element+1; i <= current_last_element; i++) 
+    //     {
+    //         len += sprintf(buffer + len, ",%f", sti_array[i]);
+    //     }
+    //     len += sprintf(buffer + len, "]\n");
+    // }
+    // else
+    // {
+    //     len += sprintf(buffer + len, "[%f", sti_array[current_first_element]);
+    //     for (int i = current_first_element+1; i < MAX_NUMBER_OF_SAMPLES_KEPT; i++) {
+    //         len += sprintf(buffer + len, ",%f", sti_array[i]);
+    //     }
+    //     for (int i = 0+1; i <= current_last_element; i++) {
+    //         len += sprintf(buffer + len, ",%f", sti_array[i]);
+    //     }
+    //     len += sprintf(buffer + len, "]\n");
+    // }
 
     return len;
 }
@@ -241,8 +196,6 @@ size_t print_breathing_rate_to_buffer(char *buffer, size_t len){ //TODO: current
     len += sprintf(buffer + len, "18");
     return len;
 }
-
-
 
 void setup_broadcast_messages(){
     // define what goes into the udp broadcast messages
@@ -291,7 +244,7 @@ static void udp_client_task(void *pvParameters)
 
         while (1) 
         {
-            char *buffer = malloc(8 * 1024);
+            char *buffer = malloc_or_die(8 * 1024);
             size_t len = 0;
             // create payload
 
@@ -308,8 +261,6 @@ static void udp_client_task(void *pvParameters)
             }
             len = (*broadcast_functions.list[broadcast_functions.elements-1])(buffer, len);
 
-
-            // TODO amplitude array
 
             int err = sendto(sock, buffer, len, 0, (struct sockaddr *)&dest_addr, sizeof(dest_addr));
             if (err < 0) {
@@ -331,8 +282,6 @@ static void udp_client_task(void *pvParameters)
     }
     vTaskDelete(NULL);
 }
-
-
 
 static void wifi_event_handler(void* arg, esp_event_base_t event_base,
                                     int32_t event_id, void* event_data)
@@ -356,10 +305,202 @@ void analysis_init(void){
     bandpass_filter_initialize(&heart_filter, heart_bandpass_coefficients[0], heart_bandpass_coefficients[1], NUMBER_COEFFICIENTS);
 }
 
+void print_x(float *x, int x_length){
+    char *buffer1 = malloc_or_die(8 * 1024* 4);
+    size_t len1 = 0;
+    len1 += sprintf(buffer1 + len1, "\"[%f", x[0]);
+    for (int i = 1; i < x_length; i++) 
+    {
+        len1 += sprintf(buffer1 + len1, ",%f", x[i]);
+    }
+    len1 += sprintf(buffer1 + len1, "]\"\n");
+    
+    printf("%s", buffer1);
+    free(buffer1);
+}
+
+float mrc_pca(float *MRC_ratios, float data[][NUMBER_SUBCARRIERS], int data_length, int data_current_last_index, int use_last_n_elements, float lower_frequency_bound, float upper_frequency_bound, float *bandpass_coefficients_b, float *bandpass_coefficients_a){
+    // calculate psd
+
+    // Create the FFT config structure
+    fft_config_t *real_fft_plan = fft_init(use_last_n_elements, FFT_REAL, FFT_FORWARD, NULL, NULL);
+
+    // create array passed to the PCA
+    float *x_pca = malloc_or_die(use_last_n_elements * sizeof(float));
+
+    float *x_psd = malloc_or_die(use_last_n_elements/2 * sizeof(float));
+
+    float MRC_scalar = 0;
+    
+    // for all subcarriers - calculate the MCR ratios
+    for(int subcarrier = 0; subcarrier<NUMBER_SUBCARRIERS; subcarrier++){
+        
+        // calculate the mean
+        int data_index = get_next_index(data_current_last_index, data_length);
+        float mean = 0;
+        int index=use_last_n_elements-1;
+        while (index >= 0)
+        {
+            data_index = get_previous_index(data_index, data_length);
+            mean += data[data_index][subcarrier]/use_last_n_elements; 
+            index--;
+        }
+
+        data_index = get_next_index(data_current_last_index, data_length);
+
+        // fill it from the end to the front
+        index=use_last_n_elements-1;
+        while (index >= 0)
+        {
+            data_index = get_previous_index(data_index, data_length);
+            x_pca[index] = data[data_index][subcarrier]; 
+            real_fft_plan->input[index] = data[data_index][subcarrier] - mean; 
+            index--;
+        }
+        
+        // if (subcarrier==6){
+        //     ESP_LOGI("mrc_pca", "initial x:");
+        //     print_x(real_fft_plan->input, use_last_n_elements);
+        // }
+
+        // Execute transformation
+        fft_execute(real_fft_plan);
+
+        // if (subcarrier==6){
+        //     ESP_LOGI("mrc_pca", "x after fft:");
+        //     print_x(real_fft_plan->output, use_last_n_elements);
+
+        //     // Now do something with the output
+        //     printf("DC component : %f\n", real_fft_plan->output[0]);  // DC is at [0]
+        //     for (int k = 1 ; k < real_fft_plan->size / 2 ; k++){
+        //         printf("%d-th freq : %f+j%f\n", k, real_fft_plan->output[2*k], real_fft_plan->output[2*k+1]);
+        //     }
+        //     printf("Middle component : %f\n", real_fft_plan->output[1]);  // N/2 is real and stored at [1]
+        // }
+
+        // get the signal energy within the range of normal respiratory rates
+        // get the signal energy outside of that range
+        float signal_energy = 0;
+        float noise_energy = 0;      
+        for (int i = 0 ; i < use_last_n_elements/2 ; i++) {
+            // calculate the amplitude
+            x_psd[i] = powf(sqrtf(real_fft_plan->output[i*2] * real_fft_plan->output[i*2] + real_fft_plan->output[i*2+1] * real_fft_plan->output[i*2+1]), 2.0)/use_last_n_elements;
+            
+            
+            if(fft_frequencies[i]>lower_frequency_bound && fft_frequencies[i]<upper_frequency_bound){
+                // if (subcarrier==6){
+                //     ESP_LOGW("signal energy", "value: %f, adding: %f", signal_energy, x_psd[i]);
+                // }
+                signal_energy += x_psd[i]/use_last_n_elements;
+                
+            }else{
+                // if (subcarrier==6){
+                //     ESP_LOGW("noise energy", "value: %f, adding: %f", noise_energy, x_psd[i]);
+                // }
+                noise_energy += x_psd[i]/use_last_n_elements;
+                
+            }
+        }
+
+        // calculate the ratio
+        float SNR = signal_energy / noise_energy;
+        if(noise_energy == 0){
+            SNR = 0;
+        }
+        // store it in the ratio array
+        MRC_ratios[subcarrier] = SNR;
+        MRC_scalar += SNR;
+
+        // apply bandpass filter to the signal multiplied with the SNR and then compute the first PC
+        BandpassIIRFilter filter;
+        bandpass_filter_initialize(&filter, bandpass_coefficients_b, bandpass_coefficients_a, NUMBER_COEFFICIENTS);
+        for(int i=0; i<use_last_n_elements; i++){
+            bandpass_filter_apply(&filter, x_pca[i]*SNR);
+            x_pca[i] = filter.out;
+        }
+
+        // perform PCA
+        float pc_positive = is_first_pc_positive(x_pca, use_last_n_elements);
+        // add the sign of the first principal component to each MRC ratio
+        MRC_ratios[subcarrier] *= pc_positive;
+        
+        // ESP_LOGI(TAG, "end of subcarrier for, value %f, signal %f, noise %f", MRC_ratios[subcarrier], signal_energy, noise_energy);
+        
+    }
+    ESP_LOGI(TAG, "completed mrc-pca, MRC scalar %f", MRC_scalar);
+    fft_destroy(real_fft_plan);
+    free(x_pca);
+    return MRC_scalar;
+}
+
+float fft_rate_estimation(float *data, int data_length, int data_current_last_index, int use_last_n_elements){
+    // Create the FFT config structure
+    fft_config_t *real_fft_plan = fft_init(use_last_n_elements, FFT_REAL, FFT_FORWARD, NULL, NULL);
+
+    float *x_amp = malloc_or_die(use_last_n_elements/2 * sizeof(float));
+
+    // calculate the mean
+    int data_index = get_next_index(data_current_last_index, data_length);
+    float mean = 0;
+    int index=use_last_n_elements-1;
+    while (index >= 0)
+    {
+        data_index = get_previous_index(data_index, data_length);
+        mean += data[data_index]/use_last_n_elements; 
+        index--;
+    }
+
+    data_index = get_next_index(data_current_last_index, data_length);
+
+    // fill it from the end to the front
+    index=use_last_n_elements-1;
+    while (index >= 0)
+    {
+        data_index = get_previous_index(data_index, data_length);
+        real_fft_plan->input[index] = data[data_index] - mean; 
+        index--;
+    }
+        
+    ESP_LOGW(TAG, "created input array");
+
+    // Execute transformation
+    fft_execute(real_fft_plan);
+
+    ESP_LOGW(TAG, "done fft");
+    
+    for (int i = 0 ; i < use_last_n_elements/2 ; i++) {
+       x_amp[i] = sqrtf(real_fft_plan->output[i*2] * real_fft_plan->output[i*2] + real_fft_plan->output[i*2+1] * real_fft_plan->output[i*2+1]);
+    }
+
+    // get the index of the maximum
+    int maximum_index = 0;
+    float current_maximum = -1;
+
+    for(int i=1; i<use_last_n_elements/2; i++){
+        if(x_amp[i]>current_maximum){
+            current_maximum = x_amp[i];
+            maximum_index = i;
+        }
+    }
+    if(fabsf(real_fft_plan->output[1])>current_maximum){
+        current_maximum = fabsf(real_fft_plan->output[1]);
+        maximum_index = use_last_n_elements/2;
+    }
+
+    // get the frequency at the maximum index
+    float max_frequency = fft_frequencies[maximum_index];
+    ESP_LOGW(TAG, "n %d,  maximum index %d, max frequency %f", use_last_n_elements, maximum_index, max_frequency);
+
+    fft_destroy(real_fft_plan);
+    free(x_amp);
+    return max_frequency*60;
+}
+
+
 static void csi_data_print_task(void *arg)
 {
     wifi_csi_info_t *info = NULL;
-    char *buffer = malloc(8 * 1024);
+    char *buffer = malloc_or_die(8 * 1024);
     static uint32_t count = 0;
 
 #ifdef WRITE_TO_SD_CARD
@@ -368,7 +509,7 @@ static void csi_data_print_task(void *arg)
         ESP_LOGI(TAG, "Opening file initially");
         // Check if destination file exists before renaming
         
-        file_name = malloc(MAX_NAME_LEN);
+        file_name = malloc_or_die(MAX_NAME_LEN);
         sprintf(file_name, MOUNT_POINT"/csi.csv");
         struct stat st;
         int16_t i = 0;
@@ -383,6 +524,9 @@ static void csi_data_print_task(void *arg)
 #endif
 
     while (xQueueReceive(g_csi_info_queue, &info, portMAX_DELAY)) {
+
+        //ESP_LOGI(TAG, "================ CSI RECV ================, count: %d, time %d", count, esp_timer_get_time());
+        
         size_t len = 0;
         wifi_pkt_rx_ctrl_t *rx_ctrl = &info->rx_ctrl;
 
@@ -399,6 +543,7 @@ static void csi_data_print_task(void *arg)
         }
 
         amplitude_mean = sum / NUMBER_SUBCARRIERS;
+
         // calculate amplitude deviation
         float amplitude_deviation[NUMBER_SUBCARRIERS];
         sum = 0;
@@ -426,7 +571,7 @@ static void csi_data_print_task(void *arg)
                 sum = sum + pow((previous_amplitude_hat[i] - amplitude_hat[i]), 2);
             }
             sti = sqrt(sum);
-            // to-do: store the STI value, check if it is larger than a certain threshold and output the result of the presence detection
+            // TODO: store the STI value, check if it is larger than a certain threshold and output the result of the presence detection
         }
         
 
@@ -445,51 +590,574 @@ static void csi_data_print_task(void *arg)
         if(current_first_element == -1 || current_first_element == MAX_NUMBER_OF_SAMPLES_KEPT){
             current_first_element = 0;
         }
+        if(!first_run){
+            MAC_struct_check_if_indices_become_invalid(&MAC_breath, current_last_element);
+        }
         
+
+        ESP_LOGI(TAG, "sti %f", sti);
         sti_array[current_last_element] = sti;
         memcpy((*amplitude_array)[current_last_element], amplitude, sizeof(amplitude));
         timestamp_array[current_last_element] = rx_ctrl->timestamp;
 
-        // test the band pass filters on one selected subcarrier amplitude
-        bandpass_filter_apply(&breathing_filter, amplitude[42]);
-        printf("Bandpass_test,%f,%f\n", amplitude[42], breathing_filter.out);
+        
+        // calculate fused amplitude
+        float fused_amplitude_breath = 0;
+        float fused_amplitude_heart = 0;
+        for(int i=0; i<NUMBER_SUBCARRIERS; i++){
+            fused_amplitude_breath += (amplitude[i] * (MRC_ratios_breath[i]/MRC_scalar_breath));
+            fused_amplitude_heart += (amplitude[i] * (MRC_ratios_heart[i]/MRC_scalar_heart));
+        }
+        
+
+        // bandpass filter the fused amplitude
+        bandpass_filter_apply(&breathing_filter, fused_amplitude_breath);
+        bandpass_filter_apply(&heart_filter, fused_amplitude_heart);
+        // save the filtered amplitude
+        filtered_breath[current_last_element] = breathing_filter.out;
+        filtered_heart[current_last_element] = heart_filter.out;
 
 
+        // MAC calculations
+        // get T by usign FFT on the filtered waveform
 
-        if(current_last_element == MAX_NUMBER_OF_SAMPLES_KEPT-1){
-            ESP_LOGI(TAG, "full amplitude queue");
-            printf("current_first_element %d, current last element %d \n", current_first_element, current_last_element);
-            char *buffer1 = malloc(8 * 1024);
-            size_t len1 = 0;
-            if(current_last_element >= current_first_element)
-            {
-                len1 += sprintf(buffer1 + len1, "\"[%f", sti_array[current_first_element]);
-                for (int i = current_first_element+1; i <= current_last_element; i++) 
-                {
-                    len1 += sprintf(buffer1 + len1, ",%f", sti_array[i]);
-                }
-                len1 += sprintf(buffer1 + len1, "]\"\n");
-            }
-            else
-            {
-                len1 += sprintf(buffer1 + len1, "\"[%f", sti_array[current_first_element]);
-                for (int i = current_first_element+1; i < MAX_NUMBER_OF_SAMPLES_KEPT; i++) {
-                    len1 += sprintf(buffer1 + len1, ",%f", sti_array[i]);
-                }
-                for (int i = 0+1; i <= current_last_element; i++) {
-                    len1 += sprintf(buffer1 + len1, ",%f", sti_array[i]);
-                }
-                len1 += sprintf(buffer1 + len1, "]\"\n");
-            }
-            printf("%s", buffer1);
-            free(buffer1);
+        float T_breath = 3; // period in seconds 3 corresponds to 20 bpm
+
+        float T_heart = 1; // period in seconds 1 corresponds to 60 bpm
+
+        // get fft rate estimation every x seconds
+        if(timestamp_array[current_last_element]>next_fft_timestamp){
+            // TODO move MRC PCA to only be run once in the beginning and then only after movement
+            MRC_scalar_breath = mrc_pca(MRC_ratios_breath, amplitude_array, MAX_NUMBER_OF_SAMPLES_KEPT, current_last_element, fft_count, BREATH_LOWER_FREQUENCY_BOUND, BREATH_UPPER_FREQUENCY_BOUND, breathing_bandpass_coefficients[0], breathing_bandpass_coefficients[1]);
+            MRC_scalar_heart = mrc_pca(MRC_ratios_heart, amplitude_array, MAX_NUMBER_OF_SAMPLES_KEPT, current_last_element, fft_count, HEART_LOWER_FREQUENCY_BOUND, HEART_UPPER_FREQUENCY_BOUND, heart_bandpass_coefficients[0], heart_bandpass_coefficients[1]);
+
             
+            T_breath = fft_rate_estimation(&filtered_breath, MAX_NUMBER_OF_SAMPLES_KEPT, current_last_element, fft_count);
+            T_heart = fft_rate_estimation(&filtered_heart, MAX_NUMBER_OF_SAMPLES_KEPT, current_last_element, fft_count);
+            breath_features.fft_rate_over_window = T_breath;
+            heart_features.fft_rate_over_window = T_breath;
+
+            next_fft_timestamp += fft_every_x_seconds * SECONDS_TO_MICROSECONDS;
+            ESP_LOGI(TAG, "fft rate estimated, breathing rate %f, heart rate %f, current timestamp %d, next timestamp %d", T_breath, T_heart, timestamp_array[current_last_element], next_fft_timestamp);
         }
 
 
+        // MAC for breathing
+        int T_timestamp = 60/T_breath * SECONDS_TO_MICROSECONDS;
 
-        // printing to serial
-#ifdef PRINT_CSI_TO_SERIAL || WRITE_TO_SD_CARD
+        bool found_up_intercept = false;
+        bool found_down_intercept = false;
+        bool found_peak = false;
+        bool found_valley = false;
+        int peak_index_difference_from_last_intercept = 0;
+        int valley_index_difference_from_last_intercept = 0;
+
+        unsigned window_size = T_breath * SECONDS_TO_MICROSECONDS; // calculate from T -> timestamps are in microseconds
+        // update the MAC
+        // use the filtered amplitude for the MAC
+        if(first_run){
+            MAC_breath.current_last_intercept = -1;
+            MAC_breath.current_first_intercept = -1;
+            MAC_breath.array_len = 20;
+            MAC_breath.running_mean_initialized = false;
+            MAC_breath.first_intercept = true;
+            MAC_breath.peak_to_valley_amplitudes = malloc_or_die(sizeof(float)* MAX_NUMBER_OF_SAMPLES_KEPT);
+            MAC_breath.peak_to_valley_last_index = -1;
+            MAC_breath.intercepts = malloc_or_die(sizeof(Intercept) * MAC_breath.array_len);
+            circular_list_initialize(&MAC_breath.peak_indices, MAC_breath.array_len);
+            circular_list_initialize(&MAC_breath.valley_indices, MAC_breath.array_len);
+            running_mean_initialize(&MAC_breath.MAC, breathing_filter.out, current_last_element, timestamp_array, filtered_breath, MAX_NUMBER_OF_SAMPLES_KEPT);
+
+            poi_list_initialize(&breath_pois, 30);
+
+            dumb_running_mean_initialize(&breath_features.mean_peak_rate_over_window, 30);
+            dumb_running_mean_initialize(&breath_features.mean_up_stroke_length, 30);
+            dumb_running_mean_initialize(&breath_features.mean_up_stroke_amplitude, 30);
+            dumb_running_mean_initialize(&breath_features.mean_valley_rate_over_window, 30);
+            dumb_running_mean_initialize(&breath_features.mean_down_stroke_length, 30);
+            dumb_running_mean_initialize(&breath_features.mean_down_stroke_amplitude, 30);
+
+        }else{
+            running_mean_append(&MAC_breath.MAC, breathing_filter.out, rx_ctrl->timestamp, window_size);
+
+            // check for intercepts
+            int last_index = get_previous_index(current_last_element, MAX_NUMBER_OF_SAMPLES_KEPT);
+            if(filtered_breath[last_index] <= MAC_breath.MAC.current_mean && filtered_breath[current_last_element] >= MAC_breath.MAC.current_mean && !(filtered_breath[last_index] == MAC_breath.MAC.current_mean && filtered_breath[current_last_element] == MAC_breath.MAC.current_mean)){
+                // up intercept
+                Intercept  up_intercept;
+                intercept_initialize(&up_intercept, last_index, true);
+
+                if(MAC_breath.first_intercept){
+                    MAC_breath.current_last_intercept = 0;
+                    MAC_breath.current_first_intercept = 0;
+                    MAC_breath.intercepts[0] = up_intercept;
+                    MAC_breath.first_intercept = false;
+                }else{
+
+                    // check whether previous intercept was of the same type - this should never happen normally, but only occurs because the last intercept and corresponding peak/valley failed the amplitude check and were not added
+                    if(MAC_breath.intercepts[MAC_breath.current_last_intercept].is_up_intercept){
+                        // disregard this intercept
+                        ESP_LOGW(TAG, "same intercept type, up");
+                    }
+                    else{
+                        Intercept previous_intercept = MAC_breath.intercepts[MAC_breath.current_last_intercept];
+
+                        if(timestamp_array[up_intercept.index] - timestamp_array[previous_intercept.index] >= T_timestamp/20){
+                            // find the minimum between this and the previous intercept
+                            int i = previous_intercept.index;
+                            float current_minimum = FLT_MAX;
+                            int minimum_position = -1;
+                            int index_dif = 0;
+                            while(i != up_intercept.index){
+                                
+                                if(filtered_breath[i] <= current_minimum){
+                                    current_minimum = filtered_breath[i];
+                                    minimum_position = i;
+                                    valley_index_difference_from_last_intercept = index_dif;
+                                }
+                                index_dif++;
+                                i = get_next_index(i, MAX_NUMBER_OF_SAMPLES_KEPT);
+                            }
+                            float breath_cycle_amplitude = fabs(filtered_breath[minimum_position]-filtered_breath[MAC_breath.peak_indices.list[MAC_breath.peak_indices.current_last_element_position]]);
+
+                            // check whether the amplitude is large enough
+                            if(MAC_breath.mean_peak_to_valley_amplitude.current_number_of_elements > 3 && breath_cycle_amplitude <= MAC_breath.mean_peak_to_valley_amplitude.current_mean * 0.8){
+                                // is too small, discard the newly found intercept and valley
+                                ESP_LOGE(TAG, "ampliude not large enough");
+                            }
+                            else 
+                            {
+                                // it is large enough, so this is a valid intercept
+                                // add this intercept
+                                MAC_breath.current_last_intercept = get_next_index(MAC_breath.current_last_intercept, MAC_breath.array_len);
+                                if(MAC_breath.current_last_intercept == MAC_breath.current_first_intercept){
+                                    MAC_breath.current_first_intercept++;
+                                }
+                                MAC_breath.intercepts[MAC_breath.current_last_intercept] = up_intercept;
+
+                                // store the found valley in the corresponding list
+                                circular_list_append(&MAC_breath.valley_indices, minimum_position);
+                                MAC_breath.peak_to_valley_last_index = get_next_index(MAC_breath.peak_to_valley_last_index, MAC_breath.array_len);
+                                MAC_breath.peak_to_valley_amplitudes[MAC_breath.peak_to_valley_last_index] = breath_cycle_amplitude;
+                                // update the peak-valley-mean
+                                if(!MAC_breath.running_mean_initialized){
+                                    running_mean_initialize(&MAC_breath.mean_peak_to_valley_amplitude, breath_cycle_amplitude, current_last_element, timestamp_array, MAC_breath.peak_to_valley_amplitudes, MAX_NUMBER_OF_SAMPLES_KEPT);
+                                    MAC_breath.running_mean_initialized = true;
+                                }else{
+                                    running_mean_append(&MAC_breath.mean_peak_to_valley_amplitude, breath_cycle_amplitude, timestamp_array[MAC_breath.valley_indices.list[MAC_breath.valley_indices.current_last_element_position]], window_size);
+                                }
+
+                                POI new_poi;
+                                poi_initialize(&new_poi, false, timestamp_array[minimum_position]-timestamp_array[MAC_breath.peak_indices.list[MAC_breath.peak_indices.current_last_element_position]], breath_cycle_amplitude, minimum_position);
+                                
+
+                                // calculate valley-related features
+                                // instantaneous rate, mean rate, mean down stroke length, mean down stoke amplitude, fractional amplitude, fractional time, up/down time ratio, up/down amplitude ratio
+                                breath_features.instantaneous_valley_rate = 60.0 / ((float)new_poi.time_difference_to_previous_poi / (float)SECONDS_TO_MICROSECONDS);
+
+                                dumb_running_mean_append(&breath_features.mean_valley_rate_over_window, breath_features.instantaneous_valley_rate, timestamp_array[minimum_position], window_size);
+                                dumb_running_mean_append(&breath_features.mean_down_stroke_length, new_poi.time_difference_to_previous_poi, timestamp_array[minimum_position], window_size);
+                                dumb_running_mean_append(&breath_features.mean_down_stroke_amplitude, new_poi.amplitude_difference_to_previous_poi, timestamp_array[minimum_position], window_size);
+                                POI peak = breath_pois.list[current_last_element];
+                                breath_features.fractional_up_stroke_amplitude = peak.amplitude_difference_to_previous_poi / (peak.amplitude_difference_to_previous_poi + new_poi.amplitude_difference_to_previous_poi);
+                                breath_features.fractional_up_stroke_time = (float)peak.time_difference_to_previous_poi / (float)(peak.time_difference_to_previous_poi + new_poi.time_difference_to_previous_poi);
+                                breath_features.up_to_down_amplitude_ratio = peak.amplitude_difference_to_previous_poi / new_poi.amplitude_difference_to_previous_poi;
+                                breath_features.up_to_down_length_ratio = (float)peak.time_difference_to_previous_poi / (float)new_poi.time_difference_to_previous_poi;
+
+                                poi_list_append(&breath_pois, &new_poi);
+                                ESP_LOGI(TAG, "valley adding new poi, poi index %d, poi amp %f, poi peak %d, poi time %d", new_poi.index, new_poi.amplitude_difference_to_previous_poi, new_poi.is_peak, new_poi.time_difference_to_previous_poi);
+
+
+                                if(breath_pois.number_of_elements > 1){
+                                    calculate_variance_features(&breath_features, &breath_pois);
+                                } 
+
+                                // TODO perform processing to get further features
+                                found_up_intercept = true;
+                                found_valley = true;
+                                ESP_LOGI(TAG, "up intercept added");
+                            } 
+                        }
+                    }
+                    MAC_breath.first_intercept = false;
+                }
+            }
+
+            if(filtered_breath[last_index] >= MAC_breath.MAC.current_mean && filtered_breath[current_last_element] <= MAC_breath.MAC.current_mean && !(filtered_breath[last_index] == MAC_breath.MAC.current_mean && filtered_breath[current_last_element] == MAC_breath.MAC.current_mean)){
+                // down intercept
+                Intercept  down_intercept;
+                intercept_initialize(&down_intercept, last_index, false);
+
+                if(MAC_breath.first_intercept){
+                    MAC_breath.current_last_intercept = 0;
+                    MAC_breath.intercepts[0] = down_intercept;
+                    MAC_breath.first_intercept = false;
+                }else{
+
+                    // check whether previous intercept was of the same type - this should never happen normally, but only occurs because the last intercept and corresponding peak/valley failed the amplitude check and were not added
+                    if(!MAC_breath.intercepts[MAC_breath.current_last_intercept].is_up_intercept){
+                        // disregard this intercept
+                        ESP_LOGW(TAG, "same intercep type, down");
+                    }
+                    else{
+                        Intercept previous_intercept = MAC_breath.intercepts[MAC_breath.current_last_intercept];
+
+                        if(timestamp_array[down_intercept.index] - timestamp_array[previous_intercept.index] >= T_timestamp/20){
+                            // find the maximum between this and the previous intercept
+                            int i = previous_intercept.index;
+                            float current_maximum = -FLT_MAX;
+                            int maximum_position = -1;
+                            int index_dif = 0;
+                            while(i != down_intercept.index){
+                                if(filtered_breath[i] >= current_maximum){
+                                    current_maximum = filtered_breath[i];
+                                    maximum_position = i;
+                                    peak_index_difference_from_last_intercept = index_dif;
+                                }
+                                index_dif++;
+                                i = get_next_index(i, MAX_NUMBER_OF_SAMPLES_KEPT);
+                            }
+                            float breath_cycle_amplitude = fabs(filtered_breath[maximum_position]-filtered_breath[MAC_breath.valley_indices.list[MAC_breath.valley_indices.current_last_element_position]]);
+
+                            // check whether the amplitude is large enough - but only if enough amplitudes have been added yet, otherwise if the first amplitude is an outlier no further ones will be added
+                            if(MAC_breath.mean_peak_to_valley_amplitude.current_number_of_elements > 3 && breath_cycle_amplitude <= MAC_breath.mean_peak_to_valley_amplitude.current_mean * 0.8){
+                                // is too small, discard the newly found intercept and peak
+                                ESP_LOGE(TAG, "amplitude not large enough");
+                            }
+                            else 
+                            {   
+                                // it is large enough, so this is a valid intercept
+                                // add this intercept
+                                MAC_breath.current_last_intercept = get_next_index(MAC_breath.current_last_intercept, MAC_breath.array_len);
+                                if(MAC_breath.current_last_intercept == MAC_breath.current_first_intercept){
+                                    MAC_breath.current_first_intercept++;
+                                }
+                                MAC_breath.intercepts[MAC_breath.current_last_intercept] = down_intercept;
+
+                                MAC_breath.peak_to_valley_last_index = get_next_index(MAC_breath.peak_to_valley_last_index, MAC_breath.array_len);
+                                MAC_breath.peak_to_valley_amplitudes[MAC_breath.peak_to_valley_last_index] = breath_cycle_amplitude;
+                                // store the found valley in the corresponding list
+                                circular_list_append(&MAC_breath.valley_indices, maximum_position);
+                                // update the peak-valley-mean
+                                if(!MAC_breath.running_mean_initialized){
+                                    running_mean_initialize(&MAC_breath.mean_peak_to_valley_amplitude, breath_cycle_amplitude, current_last_element, timestamp_array, MAC_breath.peak_to_valley_amplitudes, MAX_NUMBER_OF_SAMPLES_KEPT);
+                                    MAC_breath.running_mean_initialized = true;
+                                }else{
+                                    running_mean_append(&MAC_breath.mean_peak_to_valley_amplitude, breath_cycle_amplitude, timestamp_array[MAC_breath.peak_indices.list[MAC_breath.peak_indices.current_last_element_position]], window_size);
+                                }
+
+                                POI new_poi;
+                                poi_initialize(&new_poi, false, timestamp_array[maximum_position]-timestamp_array[MAC_breath.valley_indices.list[MAC_breath.valley_indices.current_last_element_position]], breath_cycle_amplitude, maximum_position);
+                                
+
+                                // calculate peak-related features
+                                // instantaneous rate, mean rate, mean up stroke length, mean up stoke amplitude
+                                breath_features.instantaneous_peak_rate = 60.0 / ((float)new_poi.time_difference_to_previous_poi / (float)SECONDS_TO_MICROSECONDS);
+
+                                dumb_running_mean_append(&breath_features.mean_peak_rate_over_window, breath_features.instantaneous_peak_rate, timestamp_array[maximum_position], window_size);
+                                dumb_running_mean_append(&breath_features.mean_up_stroke_length, new_poi.time_difference_to_previous_poi, timestamp_array[maximum_position], window_size);
+                                dumb_running_mean_append(&breath_features.mean_up_stroke_amplitude, new_poi.amplitude_difference_to_previous_poi, timestamp_array[maximum_position], window_size);
+                                
+                                ESP_LOGI(TAG, "adding new poi, poi index %d, poi amp %f, poi peak %d, poi time %d", new_poi.index, new_poi.amplitude_difference_to_previous_poi, new_poi.is_peak, new_poi.time_difference_to_previous_poi);
+
+                                poi_list_append(&breath_pois, &new_poi);
+
+                                if(breath_pois.number_of_elements > 1){
+                                    calculate_variance_features(&breath_features, &breath_pois);
+                                } 
+
+                                // TODO perform processing to get further features
+                                found_down_intercept = true;
+                                found_peak = true;
+                                ESP_LOGI(TAG, "down intercept added");
+                            } 
+                        }
+                    }
+                    MAC_breath.first_intercept = false;
+                }
+            }
+            printf("breathing data,%d,%f,%f,%d,%d,%d,%d,%d,%d\n", timestamp_array[current_last_element], filtered_breath[current_last_element], MAC_breath.MAC.current_mean, found_up_intercept, found_down_intercept, found_valley, valley_index_difference_from_last_intercept, found_peak, peak_index_difference_from_last_intercept);
+            
+        }
+        
+
+        // MAC for heart
+        T_timestamp = 60/T_heart * SECONDS_TO_MICROSECONDS;
+
+        found_up_intercept = false;
+        found_down_intercept = false;
+        found_peak = false;
+        found_valley = false;
+        peak_index_difference_from_last_intercept = 0;
+        valley_index_difference_from_last_intercept = 0;
+
+        window_size = T_heart * SECONDS_TO_MICROSECONDS; // calculate from T -> timestamps are in microseconds
+        // update the MAC
+        // use the filtered amplitude for the MAC
+        if(first_run){
+            MAC_heart.current_last_intercept = -1;
+            MAC_heart.current_first_intercept = -1;
+            MAC_heart.array_len = 20;
+            MAC_heart.running_mean_initialized = false;
+            MAC_heart.first_intercept = true;
+            MAC_heart.peak_to_valley_amplitudes = malloc_or_die(sizeof(float)* MAX_NUMBER_OF_SAMPLES_KEPT);
+            MAC_heart.peak_to_valley_last_index = -1;
+            MAC_heart.intercepts = malloc_or_die(sizeof(Intercept) * MAC_heart.array_len);
+            circular_list_initialize(&MAC_heart.peak_indices, MAC_heart.array_len);
+            circular_list_initialize(&MAC_heart.valley_indices, MAC_heart.array_len);
+            running_mean_initialize(&MAC_heart.MAC, heart_filter.out, current_last_element, timestamp_array, filtered_heart, MAX_NUMBER_OF_SAMPLES_KEPT);
+
+            poi_list_initialize(&heart_pois, 30);
+
+            dumb_running_mean_initialize(&heart_features.mean_peak_rate_over_window, 30);
+            dumb_running_mean_initialize(&heart_features.mean_up_stroke_length, 30);
+            dumb_running_mean_initialize(&heart_features.mean_up_stroke_amplitude, 30);
+            dumb_running_mean_initialize(&heart_features.mean_valley_rate_over_window, 30);
+            dumb_running_mean_initialize(&heart_features.mean_down_stroke_length, 30);
+            dumb_running_mean_initialize(&heart_features.mean_down_stroke_amplitude, 30);
+
+            first_run = false;
+        }else{
+            running_mean_append(&MAC_heart.MAC, heart_filter.out, rx_ctrl->timestamp, window_size);
+
+            // check for intercepts
+            int last_index = get_previous_index(current_last_element, MAX_NUMBER_OF_SAMPLES_KEPT);
+            if(filtered_heart[last_index] <= MAC_heart.MAC.current_mean && filtered_heart[current_last_element] >= MAC_heart.MAC.current_mean && !(filtered_heart[last_index] == MAC_heart.MAC.current_mean && filtered_heart[current_last_element] == MAC_heart.MAC.current_mean)){
+                // up intercept
+                Intercept  up_intercept;
+                intercept_initialize(&up_intercept, last_index, true);
+
+                if(MAC_heart.first_intercept){
+                    MAC_heart.current_last_intercept = 0;
+                    MAC_heart.current_first_intercept = 0;
+                    MAC_heart.intercepts[0] = up_intercept;
+                    MAC_heart.first_intercept = false;
+                }else{
+
+                    // check whether previous intercept was of the same type - this should never happen normally, but only occurs because the last intercept and corresponding peak/valley failed the amplitude check and were not added
+                    if(MAC_heart.intercepts[MAC_heart.current_last_intercept].is_up_intercept){
+                        // disregard this intercept
+                        ESP_LOGW(TAG, "same intercept type, up");
+                    }
+                    else{
+                        Intercept previous_intercept = MAC_heart.intercepts[MAC_heart.current_last_intercept];
+
+                        if(timestamp_array[up_intercept.index] - timestamp_array[previous_intercept.index] >= T_timestamp/20){
+                            // find the minimum between this and the previous intercept
+                            int i = previous_intercept.index;
+                            float current_minimum = FLT_MAX;
+                            int minimum_position = -1;
+                            int index_dif = 0;
+                            while(i != up_intercept.index){
+                                
+                                if(filtered_heart[i] <= current_minimum){
+                                    current_minimum = filtered_heart[i];
+                                    minimum_position = i;
+                                    valley_index_difference_from_last_intercept = index_dif;
+                                }
+                                index_dif++;
+                                i = get_next_index(i, MAX_NUMBER_OF_SAMPLES_KEPT);
+                            }
+                            float heart_cycle_amplitude = fabs(filtered_heart[minimum_position]-filtered_heart[MAC_heart.peak_indices.list[MAC_heart.peak_indices.current_last_element_position]]);
+
+                            // check whether the amplitude is large enough
+                            if(MAC_heart.mean_peak_to_valley_amplitude.current_number_of_elements > 3 && heart_cycle_amplitude <= MAC_heart.mean_peak_to_valley_amplitude.current_mean * 0.8){
+                                // is too small, discard the newly found intercept and valley
+                                ESP_LOGE(TAG, "ampliude not large enough");
+                            }
+                            else 
+                            {
+                                // it is large enough, so this is a valid intercept
+                                // add this intercept
+                                MAC_heart.current_last_intercept = get_next_index(MAC_heart.current_last_intercept, MAC_heart.array_len);
+                                if(MAC_heart.current_last_intercept == MAC_heart.current_first_intercept){
+                                    MAC_heart.current_first_intercept++;
+                                }
+                                MAC_heart.intercepts[MAC_heart.current_last_intercept] = up_intercept;
+
+                                // store the found valley in the corresponding list
+                                circular_list_append(&MAC_heart.valley_indices, minimum_position);
+                                MAC_heart.peak_to_valley_last_index = get_next_index(MAC_heart.peak_to_valley_last_index, MAC_heart.array_len);
+                                MAC_heart.peak_to_valley_amplitudes[MAC_heart.peak_to_valley_last_index] = heart_cycle_amplitude;
+                                // update the peak-valley-mean
+                                if(!MAC_heart.running_mean_initialized){
+                                    running_mean_initialize(&MAC_heart.mean_peak_to_valley_amplitude, heart_cycle_amplitude, current_last_element, timestamp_array, MAC_heart.peak_to_valley_amplitudes, MAX_NUMBER_OF_SAMPLES_KEPT);
+                                    MAC_heart.running_mean_initialized = true;
+                                }else{
+                                    running_mean_append(&MAC_heart.mean_peak_to_valley_amplitude, heart_cycle_amplitude, timestamp_array[MAC_heart.valley_indices.list[MAC_heart.valley_indices.current_last_element_position]], window_size);
+                                }
+
+                                POI new_poi;
+                                poi_initialize(&new_poi, false, timestamp_array[minimum_position]-timestamp_array[MAC_heart.peak_indices.list[MAC_heart.peak_indices.current_last_element_position]], heart_cycle_amplitude, minimum_position);
+                                
+
+                                // calculate valley-related features
+                                // instantaneous rate, mean rate, mean down stroke length, mean down stoke amplitude, fractional amplitude, fractional time, up/down time ratio, up/down amplitude ratio
+                                heart_features.instantaneous_valley_rate = 60.0 / ((float)new_poi.time_difference_to_previous_poi / (float)SECONDS_TO_MICROSECONDS);
+
+                                dumb_running_mean_append(&heart_features.mean_valley_rate_over_window, heart_features.instantaneous_valley_rate, timestamp_array[minimum_position], window_size);
+                                dumb_running_mean_append(&heart_features.mean_down_stroke_length, new_poi.time_difference_to_previous_poi, timestamp_array[minimum_position], window_size);
+                                dumb_running_mean_append(&heart_features.mean_down_stroke_amplitude, new_poi.amplitude_difference_to_previous_poi, timestamp_array[minimum_position], window_size);
+                                POI peak = heart_pois.list[current_last_element];
+                                heart_features.fractional_up_stroke_amplitude = peak.amplitude_difference_to_previous_poi / (peak.amplitude_difference_to_previous_poi + new_poi.amplitude_difference_to_previous_poi);
+                                heart_features.fractional_up_stroke_time = (float)peak.time_difference_to_previous_poi / (float)(peak.time_difference_to_previous_poi + new_poi.time_difference_to_previous_poi);
+                                heart_features.up_to_down_amplitude_ratio = peak.amplitude_difference_to_previous_poi / new_poi.amplitude_difference_to_previous_poi;
+                                heart_features.up_to_down_length_ratio = (float)peak.time_difference_to_previous_poi / (float)new_poi.time_difference_to_previous_poi;
+
+                                poi_list_append(&heart_pois, &new_poi);
+                                ESP_LOGI(TAG, "valley adding new poi, poi index %d, poi amp %f, poi peak %d, poi time %d", new_poi.index, new_poi.amplitude_difference_to_previous_poi, new_poi.is_peak, new_poi.time_difference_to_previous_poi);
+
+
+                                if(heart_pois.number_of_elements > 1){
+                                    calculate_variance_features(&heart_features, &heart_pois);
+                                } 
+
+                                // TODO perform processing to get further features
+                                found_up_intercept = true;
+                                found_valley = true;
+                                ESP_LOGI(TAG, "up intercept added");
+                            } 
+                        }
+                    }
+                    MAC_heart.first_intercept = false;
+                }
+            }
+
+            if(filtered_heart[last_index] >= MAC_heart.MAC.current_mean && filtered_heart[current_last_element] <= MAC_heart.MAC.current_mean && !(filtered_heart[last_index] == MAC_heart.MAC.current_mean && filtered_heart[current_last_element] == MAC_heart.MAC.current_mean)){
+                // down intercept
+                Intercept  down_intercept;
+                intercept_initialize(&down_intercept, last_index, false);
+
+                if(MAC_heart.first_intercept){
+                    MAC_heart.current_last_intercept = 0;
+                    MAC_heart.intercepts[0] = down_intercept;
+                    MAC_heart.first_intercept = false;
+                }else{
+
+                    // check whether previous intercept was of the same type - this should never happen normally, but only occurs because the last intercept and corresponding peak/valley failed the amplitude check and were not added
+                    if(!MAC_heart.intercepts[MAC_heart.current_last_intercept].is_up_intercept){
+                        // disregard this intercept
+                        ESP_LOGW(TAG, "same intercep type, down");
+                    }
+                    else{
+                        Intercept previous_intercept = MAC_heart.intercepts[MAC_heart.current_last_intercept];
+
+                        if(timestamp_array[down_intercept.index] - timestamp_array[previous_intercept.index] >= T_timestamp/20){
+                            // find the maximum between this and the previous intercept
+                            int i = previous_intercept.index;
+                            float current_maximum = -FLT_MAX;
+                            int maximum_position = -1;
+                            int index_dif = 0;
+                            while(i != down_intercept.index){
+                                if(filtered_heart[i] >= current_maximum){
+                                    current_maximum = filtered_heart[i];
+                                    maximum_position = i;
+                                    peak_index_difference_from_last_intercept = index_dif;
+                                }
+                                index_dif++;
+                                i = get_next_index(i, MAX_NUMBER_OF_SAMPLES_KEPT);
+                            }
+                            float heart_cycle_amplitude = fabs(filtered_heart[maximum_position]-filtered_heart[MAC_heart.valley_indices.list[MAC_heart.valley_indices.current_last_element_position]]);
+
+                            // check whether the amplitude is large enough - but only if enough amplitudes have been added yet, otherwise if the first amplitude is an outlier no further ones will be added
+                            if(MAC_heart.mean_peak_to_valley_amplitude.current_number_of_elements > 3 && heart_cycle_amplitude <= MAC_heart.mean_peak_to_valley_amplitude.current_mean * 0.8){
+                                // is too small, discard the newly found intercept and peak
+                                ESP_LOGE(TAG, "amplitude not large enough");
+                            }
+                            else 
+                            {   
+                                // it is large enough, so this is a valid intercept
+                                // add this intercept
+                                MAC_heart.current_last_intercept = get_next_index(MAC_heart.current_last_intercept, MAC_heart.array_len);
+                                if(MAC_heart.current_last_intercept == MAC_heart.current_first_intercept){
+                                    MAC_heart.current_first_intercept++;
+                                }
+                                MAC_heart.intercepts[MAC_heart.current_last_intercept] = down_intercept;
+
+                                MAC_heart.peak_to_valley_last_index = get_next_index(MAC_heart.peak_to_valley_last_index, MAC_heart.array_len);
+                                MAC_heart.peak_to_valley_amplitudes[MAC_heart.peak_to_valley_last_index] = heart_cycle_amplitude;
+                                // store the found valley in the corresponding list
+                                circular_list_append(&MAC_heart.valley_indices, maximum_position);
+                                // update the peak-valley-mean
+                                if(!MAC_heart.running_mean_initialized){
+                                    running_mean_initialize(&MAC_heart.mean_peak_to_valley_amplitude, heart_cycle_amplitude, current_last_element, timestamp_array, MAC_heart.peak_to_valley_amplitudes, MAX_NUMBER_OF_SAMPLES_KEPT);
+                                    MAC_heart.running_mean_initialized = true;
+                                }else{
+                                    running_mean_append(&MAC_heart.mean_peak_to_valley_amplitude, heart_cycle_amplitude, timestamp_array[MAC_heart.peak_indices.list[MAC_heart.peak_indices.current_last_element_position]], window_size);
+                                }
+
+                                POI new_poi;
+                                poi_initialize(&new_poi, false, timestamp_array[maximum_position]-timestamp_array[MAC_heart.valley_indices.list[MAC_heart.valley_indices.current_last_element_position]], heart_cycle_amplitude, maximum_position);
+                                
+
+                                // calculate peak-related features
+                                // instantaneous rate, mean rate, mean up stroke length, mean up stoke amplitude
+                                heart_features.instantaneous_peak_rate = 60.0 / ((float)new_poi.time_difference_to_previous_poi / (float)SECONDS_TO_MICROSECONDS);
+
+                                dumb_running_mean_append(&heart_features.mean_peak_rate_over_window, heart_features.instantaneous_peak_rate, timestamp_array[maximum_position], window_size);
+                                dumb_running_mean_append(&heart_features.mean_up_stroke_length, new_poi.time_difference_to_previous_poi, timestamp_array[maximum_position], window_size);
+                                dumb_running_mean_append(&heart_features.mean_up_stroke_amplitude, new_poi.amplitude_difference_to_previous_poi, timestamp_array[maximum_position], window_size);
+                                
+                                ESP_LOGI(TAG, "adding new poi, poi index %d, poi amp %f, poi peak %d, poi time %d", new_poi.index, new_poi.amplitude_difference_to_previous_poi, new_poi.is_peak, new_poi.time_difference_to_previous_poi);
+
+                                poi_list_append(&heart_pois, &new_poi);
+
+                                if(heart_pois.number_of_elements > 1){
+                                    calculate_variance_features(&heart_features, &heart_pois);
+                                } 
+
+                                // TODO perform processing to get further features
+                                found_down_intercept = true;
+                                found_peak = true;
+                                ESP_LOGI(TAG, "down intercept added");
+                            } 
+                        }
+                    }
+                    MAC_heart.first_intercept = false;
+                }
+            }
+            printf("heart data,%d,%f,%f,%d,%d,%d,%d,%d,%d\n", timestamp_array[current_last_element], filtered_heart[current_last_element], MAC_heart.MAC.current_mean, found_up_intercept, found_down_intercept, found_valley, valley_index_difference_from_last_intercept, found_peak, peak_index_difference_from_last_intercept);
+            
+        }
+        
+
+        // printf("Bandpass_test,%f,%f\n", amplitude[42], breathing_filter.out);
+
+        // print the filtered breath
+        // if(current_last_element == MAX_NUMBER_OF_SAMPLES_KEPT-1){
+        //     ESP_LOGI(TAG, "enough samples for testing fft");
+        //     float rate = fft_rate_estimation(&filtered_breath, MAX_NUMBER_OF_SAMPLES_KEPT, current_last_element, fft_count);
+            
+        //     printf("estimated rate %f, current_first_element %d, current last element %d \n", rate, current_first_element, current_last_element);
+        //     char *buffer1 = malloc_or_die(8 * 1024* 4);
+        //     size_t len1 = 0;
+        //     if(current_last_element >= current_first_element)
+        //     {
+        //         len1 += sprintf(buffer1 + len1, "\"[%f", filtered_breath[current_first_element]);
+        //         for (int i = current_first_element+1; i <= current_last_element; i++) 
+        //         {
+        //             len1 += sprintf(buffer1 + len1, ",%f", filtered_breath[i]);
+        //         }
+        //         len1 += sprintf(buffer1 + len1, "]\"\n");
+        //     }
+        //     else
+        //     {
+        //         len1 += sprintf(buffer1 + len1, "\"[%f", filtered_breath[current_first_element]);
+        //         for (int i = current_first_element+1; i < MAX_NUMBER_OF_SAMPLES_KEPT; i++) {
+        //             len1 += sprintf(buffer1 + len1, ",%f", filtered_breath[i]);
+        //         }
+        //         for (int i = 0+1; i <= current_last_element; i++) {
+        //             len1 += sprintf(buffer1 + len1, ",%f", filtered_breath[i]);
+        //         }
+        //         len1 += sprintf(buffer1 + len1, "]\"\n");
+        //     }
+        //     printf("%s", buffer1);
+        //     free(buffer1);
+            
+        // }
+
+
+#if defined(PRINT_CSI_TO_SERIAL) || defined(WRITE_TO_SD_CARD)
         if (!count) {
             ESP_LOGI(TAG, "================ CSI RECV ================");
             len += sprintf(buffer + len, "type,sequence,timestamp,source_mac,first_word_invalid,len,rssi,rate,sig_mode,mcs,bandwidth,smoothing,not_sounding,aggregation,stbc,fec_coding,sgi,noise_floor,ampdu_cnt,channel,secondary_channel,local_timestamp,ant,sig_len,rx_state,data\n");
@@ -497,12 +1165,12 @@ static void csi_data_print_task(void *arg)
 
 
         len += sprintf(buffer + len, "CSI_DATA,%d,%u," MACSTR ",%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%u,%d,%d,%d,%d,%d,",
-                       count++, esp_log_timestamp(),
-                       MAC2STR(info->mac), info->first_word_invalid, info->len, rx_ctrl->rssi, rx_ctrl->rate, rx_ctrl->sig_mode,
-                       rx_ctrl->mcs, rx_ctrl->cwb, rx_ctrl->smoothing, rx_ctrl->not_sounding,
-                       rx_ctrl->aggregation, rx_ctrl->stbc, rx_ctrl->fec_coding, rx_ctrl->sgi,
-                       rx_ctrl->noise_floor, rx_ctrl->ampdu_cnt, rx_ctrl->channel, rx_ctrl->secondary_channel,
-                       rx_ctrl->timestamp, rx_ctrl->ant, rx_ctrl->sig_len, rx_ctrl->rx_state);
+                    count, esp_log_timestamp(),
+                    MAC2STR(info->mac), info->first_word_invalid, info->len, rx_ctrl->rssi, rx_ctrl->rate, rx_ctrl->sig_mode,
+                    rx_ctrl->mcs, rx_ctrl->cwb, rx_ctrl->smoothing, rx_ctrl->not_sounding,
+                    rx_ctrl->aggregation, rx_ctrl->stbc, rx_ctrl->fec_coding, rx_ctrl->sgi,
+                    rx_ctrl->noise_floor, rx_ctrl->ampdu_cnt, rx_ctrl->channel, rx_ctrl->secondary_channel,
+                    rx_ctrl->timestamp, rx_ctrl->ant, rx_ctrl->sig_len, rx_ctrl->rx_state);
 
         
         len += sprintf(buffer + len, "\"[%d", info->buf[0]);
@@ -513,18 +1181,19 @@ static void csi_data_print_task(void *arg)
 
         len += sprintf(buffer + len, "]\"\n");
 #endif
+        count++;
 
 #ifdef PRINT_CSI_TO_SERIAL
         printf("%s", buffer);
 #endif
         
 #ifdef WRITE_TO_SD_CARD
-        ESP_LOGI(TAG, "================ printing to file ================");
+        //ESP_LOGI(TAG, "================ printing to file ================");
         fprintf(file, "%s", buffer);
         
 
         write_count++;
-        if (write_count > WRITE_FILE_AFTER_RECEIVED_CSI_NUMBER) // TODO:  change this to an appropriate number (depending on the CSI rate)
+        if (write_count > WRITE_FILE_AFTER_RECEIVED_CSI_NUMBER)
         {
             write_count = 0;
             ESP_LOGI(TAG, "================ Closing file ================");
@@ -535,7 +1204,10 @@ static void csi_data_print_task(void *arg)
             file = fopen(file_name, "a");
         }
 #endif
+        
         free(info);
+        
+        
     }
 
     free(buffer);
@@ -555,15 +1227,24 @@ static void csi_data_print_task(void *arg)
 
 static void csi_callback(void *ctx, wifi_csi_info_t *info)
 {
-    wifi_csi_info_t *q_data = malloc(sizeof(wifi_csi_info_t) + info->len);
-    *q_data = *info;
-    memcpy(q_data->buf, info->buf, info->len);
+    // char *temp = malloc(sizeof(char) * 6);
+    // memcpy(temp, info->mac, sizeof(info->mac));
 
+    // int result = strcmp(temp, csi_sender_mac);
 
-    if (!g_csi_info_queue || xQueueSend(g_csi_info_queue, &q_data, 0) == pdFALSE) {
-        ESP_LOGW(TAG, "g_csi_info_queue full");
-        free(q_data);
-    }
+    // ESP_LOGI(TAG, "CSI_DATA, " MACSTR ", result %d", 1, MAC2STR(info->mac), result);
+    // ESP_LOGI(TAG, "CSI_DATA2, " MACSTR ", result %d", 1, MAC2STR(temp), result);
+    // if(result == 0){
+        wifi_csi_info_t *q_data = malloc_or_die(sizeof(wifi_csi_info_t) + info->len);
+        *q_data = *info;
+        memcpy(q_data->buf, info->buf, info->len);
+
+        if (!g_csi_info_queue || xQueueSend(g_csi_info_queue, &q_data, 0) == pdFALSE) {
+            ESP_LOGW(TAG, "g_csi_info_queue full");
+            free(q_data);
+        }
+    // }
+    // free(temp);
 }
 
 void wifi_init_softap(void)
@@ -571,6 +1252,8 @@ void wifi_init_softap(void)
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
     esp_netif_create_default_wifi_ap();
+
+    
 
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
@@ -617,7 +1300,6 @@ void wifi_init_softap(void)
 
 
 }
-
 
 #ifdef WRITE_TO_SD_CARD
     void init_sdcard(void)
@@ -674,8 +1356,6 @@ void wifi_init_softap(void)
 }
 #endif
 
-
-
 void app_main(void)
 {
     //Initialize NVS
@@ -690,6 +1370,8 @@ void app_main(void)
     init_sdcard();
 #endif
 
+    esp_base_mac_addr_set(customBaseMAC);
+
     ESP_LOGI(TAG, "ESP_WIFI_MODE_AP");
     wifi_init_softap();
     esp_wifi_set_protocol(WIFI_IF_AP, WIFI_PROTOCOL_11N);
@@ -698,10 +1380,10 @@ void app_main(void)
 
     arr_alloc(MAX_NUMBER_OF_SAMPLES_KEPT, NUMBER_SUBCARRIERS, &amplitude_array);
 
-    setup_broadcast_messages();
+    // setup_broadcast_messages();
     analysis_init();
 
     g_csi_info_queue = xQueueCreate(256, sizeof(void *));
     xTaskCreate(csi_data_print_task, "csi_data_print", 4 * 1024, NULL, 0, NULL);
-    xTaskCreate(udp_client_task, "udp_client_task", 4 * 1024, NULL, 0, NULL);
+    //xTaskCreate(udp_client_task, "udp_client_task", 4 * 1024, NULL, 0, NULL);
 }

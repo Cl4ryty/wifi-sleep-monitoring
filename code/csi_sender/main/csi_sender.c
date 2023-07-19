@@ -4,6 +4,7 @@
 #include "freertos/task.h"
 #include "freertos/event_groups.h"
 #include "esp_system.h"
+#include "esp_mac.h"
 #include "esp_wifi.h"
 #include "esp_event.h"
 #include "esp_log.h"
@@ -54,13 +55,15 @@ static EventGroupHandle_t s_wifi_event_group;
 
 // how many raw 802.11 frames to send per second ~equal to the received CSI frames at the AP
 // → CSI rate
-#define PACKETS_PER_SECOND 2
+#define PACKETS_PER_SECOND 50
 
 static const char *TAG = "wifi station";
 
 static int s_retry_num = 0;
 
-// 30:ae:a4:7b:be:d9 ap mac
+// uint8_t customBaseMAC[] = {0x0A, 0x0A, 0x0A, 0x0A, 0x0A, 0x00};
+
+// 30:ae:a4:7b:be:d9 ap mac // 34:85:18:6c:c3:4d (lolin)
 // 30:ae:a4:1c:1c:a0 sta mac
 
 // see https://github.com/espressif/esp-idf/blob/ae425ec0b877cdaab12835385bb441d59704e261/docs/en/api-guides/wifi.rst#wi-fi-80211-packet-send
@@ -68,9 +71,9 @@ static int s_retry_num = 0;
 uint8_t raw_null_data_frame_buffer[] = { // raw data frame
 	0x48, 0x81,							// 0-1: Frame Control, subtype 0100 (null data), type 10 (data frame), toDS=1, order=1, all other 0
 	0x00, 0x00,							// 2-3: Duration
-	0x30, 0xae, 0xa4, 0x7b, 0xbe, 0xd9,				// 4-9: Address 1 → RA=DA → the receiver address → of the AP
-	0x30, 0xae, 0xa4, 0x1c, 0x1c, 0xa0,				// 10-15: Address 2 → TA=BSSID → the address of the transmitter → this STA
-    0x30, 0xae, 0xa4, 0x1c, 0x1c, 0xa0,				// 16-21 Address 2 → SA → the address of the entity that initiated the frame → this STA
+	0x0e, 0x0e, 0x0e, 0x0e, 0x0e, 0x0e,				// 4-9: Address 1 → RA=DA → the receiver address → of the AP
+	0x0A, 0x0A, 0x0A, 0x0A, 0x0A, 0x0A,				// 10-15: Address 2 → TA=BSSID → the address of the transmitter → this STA
+    0x0A, 0x0A, 0x0A, 0x0A, 0x0A, 0x0A,				// 16-21 Address 2 → SA → the address of the entity that initiated the frame → this STA
 	0x00, 0x00,							// 22-23: Sequence cotrol
     
 };
@@ -80,8 +83,10 @@ uint8_t raw_null_data_frame_buffer[] = { // raw data frame
 
 static void frame_send_task(void *pvParameters)
 {
+    ESP_LOGI(TAG, "csi 1");
     while(1)
     {
+        ESP_LOGI(TAG, "csi");
         esp_wifi_80211_tx(WIFI_IF_STA, raw_null_data_frame_buffer, sizeof(raw_null_data_frame_buffer), true);
         vTaskDelay( (1000/PACKETS_PER_SECOND) /  portTICK_PERIOD_MS);
     }
@@ -108,7 +113,7 @@ static void event_handler(void* arg, esp_event_base_t event_base,
         ESP_LOGI(TAG, "got ip:" IPSTR, IP2STR(&event->ip_info.ip));
         s_retry_num = 0;
         xEventGroupSetBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
-        xTaskCreate(frame_send_task, "frame_send", 4096, NULL, 5, NULL);
+        
     }
 }
 
@@ -137,18 +142,22 @@ void wifi_init_sta(void)
                                                         NULL,
                                                         &instance_got_ip));
 
+    // wifi_config_t wifi_config = {
+    //     .sta = {
+    //         .ssid = EXAMPLE_ESP_WIFI_SSID,
+    //         .password = EXAMPLE_ESP_WIFI_PASS,
+    //         /* Authmode threshold resets to WPA2 as default if password matches WPA2 standards (pasword len => 8).
+    //          * If you want to connect the device to deprecated WEP/WPA networks, Please set the threshold value
+    //          * to WIFI_AUTH_WEP/WIFI_AUTH_WPA_PSK and set the password with length and format matching to
+	//      * WIFI_AUTH_WEP/WIFI_AUTH_WPA_PSK standards.
+    //          */
+    //         .threshold.authmode = ESP_WIFI_SCAN_AUTH_MODE_THRESHOLD,
+    //         .sae_pwe_h2e = WPA3_SAE_PWE_BOTH,
+    //     },
+    // };
+
     wifi_config_t wifi_config = {
-        .sta = {
-            .ssid = EXAMPLE_ESP_WIFI_SSID,
-            .password = EXAMPLE_ESP_WIFI_PASS,
-            /* Authmode threshold resets to WPA2 as default if password matches WPA2 standards (pasword len => 8).
-             * If you want to connect the device to deprecated WEP/WPA networks, Please set the threshold value
-             * to WIFI_AUTH_WEP/WIFI_AUTH_WPA_PSK and set the password with length and format matching to
-	     * WIFI_AUTH_WEP/WIFI_AUTH_WPA_PSK standards.
-             */
-            .threshold.authmode = ESP_WIFI_SCAN_AUTH_MODE_THRESHOLD,
-            .sae_pwe_h2e = WPA3_SAE_PWE_BOTH,
-        },
+        .sta = {},
     };
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA) );
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config) );
@@ -158,23 +167,23 @@ void wifi_init_sta(void)
 
     /* Waiting until either the connection is established (WIFI_CONNECTED_BIT) or connection failed for the maximum
      * number of re-tries (WIFI_FAIL_BIT). The bits are set by event_handler() (see above) */
-    EventBits_t bits = xEventGroupWaitBits(s_wifi_event_group,
-            WIFI_CONNECTED_BIT | WIFI_FAIL_BIT,
-            pdFALSE,
-            pdFALSE,
-            portMAX_DELAY);
+    // EventBits_t bits = xEventGroupWaitBits(s_wifi_event_group,
+    //         WIFI_CONNECTED_BIT | WIFI_FAIL_BIT,
+    //         pdFALSE,
+    //         pdFALSE,
+    //         portMAX_DELAY);
 
-    /* xEventGroupWaitBits() returns the bits before the call returned, hence we can test which event actually
-     * happened. */
-    if (bits & WIFI_CONNECTED_BIT) {
-        ESP_LOGI(TAG, "connected to ap SSID:%s password:%s",
-                 EXAMPLE_ESP_WIFI_SSID, EXAMPLE_ESP_WIFI_PASS);
-    } else if (bits & WIFI_FAIL_BIT) {
-        ESP_LOGI(TAG, "Failed to connect to SSID:%s, password:%s",
-                 EXAMPLE_ESP_WIFI_SSID, EXAMPLE_ESP_WIFI_PASS);
-    } else {
-        ESP_LOGE(TAG, "UNEXPECTED EVENT");
-    }
+    // /* xEventGroupWaitBits() returns the bits before the call returned, hence we can test which event actually
+    //  * happened. */
+    // if (bits & WIFI_CONNECTED_BIT) {
+    //     ESP_LOGI(TAG, "connected to ap SSID:%s password:%s",
+    //              EXAMPLE_ESP_WIFI_SSID, EXAMPLE_ESP_WIFI_PASS);
+    // } else if (bits & WIFI_FAIL_BIT) {
+    //     ESP_LOGI(TAG, "Failed to connect to SSID:%s, password:%s",
+    //              EXAMPLE_ESP_WIFI_SSID, EXAMPLE_ESP_WIFI_PASS);
+    // } else {
+    //     ESP_LOGE(TAG, "UNEXPECTED EVENT");
+    // }
 }
 
 void app_main(void)
@@ -187,12 +196,20 @@ void app_main(void)
     }
     ESP_ERROR_CHECK(ret);
 
+    // esp_base_mac_addr_set(customBaseMAC);
+
     ESP_LOGI(TAG, "ESP_WIFI_MODE_STA");
     wifi_init_sta();
+    ESP_LOGI(TAG, "ESP_WIFI_MODE_STA finished");
 
     esp_wifi_set_protocol(WIFI_IF_STA, WIFI_PROTOCOL_11N);
     esp_wifi_config_80211_tx_rate(WIFI_IF_STA, WIFI_PHY_RATE_MCS7_SGI);
     esp_wifi_set_bandwidth(WIFI_IF_STA, WIFI_BW_HT40);
+
+    ESP_LOGI(TAG, "csi start");
+    xTaskCreate(frame_send_task, "frame_send", 4096, NULL, 5, NULL);
+    ESP_LOGI(TAG, "csi start 1");
+    //heap_caps_print_heap_info(MALLOC_CAP_8BIT);
 
     
 }
