@@ -23,12 +23,60 @@ menu "Example Configuration"
         default 4
         help
             Max number of the STA connects to AP.
-
-    config CONFIG_ESP_BASE_MAC_ADDRESS
-        string "The base MAC address of the ESP"
-        default "0x"
-        help
-            Max number of the STA connects to AP.
-
             
+    config SENSE_PRINT_STI
+        bool "print sti value"
+        default true
+        help
+            Whether to print the STI value (proxy of presence/motion) to whichever method is selected for transmitting/storing data.
+             
+    config SENSE_PRINT_FUSED_HEART
+        bool "print fused heart amplitude value"
+        default true
+        help
+            Whether to print the STI value (proxy of presence/motion) to whichever method is selected for transmitting/storing data.           
+    config SENSE_PRINT_FUSED_BREATH
+        bool "print fused breath amplitude value"
+        default true
+        help
+            Whether to print the STI value (proxy of presence/motion) to whichever method is selected for transmitting/storing data.
+           
+    config SENSE_PRINT_FILTERED_HEART
+        bool "print filtered heart value"
+        default true
+        help
+            Whether to print the STI value (proxy of presence/motion) to whichever method is selected for transmitting/storing data.
+
+    config SENSE_PRINT_FILTERED_BREATH
+        bool "print filtered breath value"
+        default true
+        help
+            Whether to print the STI value (proxy of presence/motion) to whichever method is selected for transmitting/storing data.
+
+    config SENSE_PRINT_HEART_FEATURES
+        bool "print heart features"
+        default true
+        help
+            Whether to print the STI value (proxy of presence/motion) to whichever method is selected for transmitting/storing data.
+
+    config SENSE_PRINT_BREATHING_FEATURES
+        bool "print breathing features"
+        default true
+        help
+            Whether to print the STI value (proxy of presence/motion) to whichever method is selected for transmitting/storing data.
+
+     config SENSE_PRINT_HEART_POI
+        bool "print heart poi"
+        default true
+        help
+            Whether to print the STI value (proxy of presence/motion) to whichever method is selected for transmitting/storing data.
+
+    
+    config SENSE_PRINT_BREATHING_POI
+        bool "print breathing poi"
+        default true
+        help
+            Whether to print the STI value (proxy of presence/motion) to whichever method is selected for transmitting/storing data.
+
+   
 endmenu

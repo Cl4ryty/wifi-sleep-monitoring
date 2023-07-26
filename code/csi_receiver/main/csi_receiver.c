@@ -31,7 +31,7 @@
 #include "float.h"
 
 #include "esp_dsp.h"
-#include "utilities.c"
+#include "utilities.h"
 #include "using_eigen.h"
 #include "fft.h"
 
@@ -40,10 +40,19 @@
    If you'd rather not, just change the below entries to strings with
    the config you want - ie #define EXAMPLE_WIFI_SSID "mywifissid"
 */
-#define EXAMPLE_ESP_WIFI_SSID      CONFIG_ESP_WIFI_SSID
-#define EXAMPLE_ESP_WIFI_PASS      CONFIG_ESP_WIFI_PASSWORD
-#define EXAMPLE_ESP_WIFI_CHANNEL   CONFIG_ESP_WIFI_CHANNEL
-#define EXAMPLE_MAX_STA_CONN       CONFIG_ESP_MAX_STA_CONN
+#define EXAMPLE_ESP_WIFI_SSID           CONFIG_ESP_WIFI_SSID
+#define EXAMPLE_ESP_WIFI_PASS           CONFIG_ESP_WIFI_PASSWORD
+#define EXAMPLE_ESP_WIFI_CHANNEL        CONFIG_ESP_WIFI_CHANNEL
+#define EXAMPLE_MAX_STA_CONN            CONFIG_ESP_MAX_STA_CONN
+#define SENSE_PRINT_STI                 CONFIG_SENSE_PRINT_STI
+#define SENSE_PRINT_FUSED_HEART         CONFIG_SENSE_PRINT_FUSED_HEART
+#define SENSE_PRINT_FUSED_BREATH        CONFIG_SENSE_PRINT_FUSED_BREATH
+#define SENSE_PRINT_FILTERED_HEART      CONFIG_SENSE_PRINT_FILTERED_HEART
+#define SENSE_PRINT_FILTERED_BREATH     CONFIG_SENSE_PRINT_FILTERED_BREATH
+#define SENSE_PRINT_HEART_FEATURES      CONFIG_SENSE_PRINT_HEART_FEATURES
+#define SENSE_PRINT_BREATHING_FEATURES  CONFIG_SENSE_PRINT_BREATHING_FEATURES
+#define SENSE_PRINT_HEART_POI           CONFIG_SENSE_PRINT_HEART_POI
+#define SENSE_PRINT_BREATHING_POI       CONFIG_SENSE_PRINT_BREATHING_POI
 
 uint8_t customBaseMAC[] = {0x0E, 0x0E, 0x0E, 0x0E, 0x0E, 0x0D};
 char csi_sender_mac[] = {0x01, 0x0a, 0x0a, 0x0a, 0x0a, 0x0a};
@@ -73,7 +82,7 @@ static QueueHandle_t g_csi_info_queue = NULL;
 // #define PRINT_CSI_TO_SERIAL
 
 // uncomment the next line to enable logging the raw CSI to SD-card
-// #define WRITE_TO_SD_CARD
+#define WRITE_TO_SD_CARD
 
 #ifdef WRITE_TO_SD_CARD
     // defines for using the sd card
@@ -113,6 +122,11 @@ float fft_frequencies[] = {0.0, 0.048828125, 0.09765625, 0.146484375, 0.1953125,
 int fft_every_x_seconds = 10;
 unsigned next_fft_timestamp = 30 * SECONDS_TO_MICROSECONDS; // start after 30 seconds to give the ESPs some time to start sending/receiving
 
+#define SPEED_SPECTRUM_WINDOW_IN_SECONDS 1
+#define SPEED_SPECTRUM_M_SAMPLES SPEED_SPECTRUM_WINDOW_IN_SECONDS * CSI_RATE
+float speed_spectrum_every_x_seconds = 0.1;
+unsigned next_speed_spectrum_timestamp = 5 * SECONDS_TO_MICROSECONDS; // start after 30 seconds to give the ESPs some time to start sending/receiving
+
 float (*amplitude_array)[MAX_NUMBER_OF_SAMPLES_KEPT][NUMBER_SUBCARRIERS];
 // float amplitude_array[MAX_NUMBER_OF_SAMPLES_KEPT];
 unsigned timestamp_array[MAX_NUMBER_OF_SAMPLES_KEPT];
@@ -144,6 +158,18 @@ float MRC_ratios_breath[NUMBER_SUBCARRIERS];
 float MRC_ratios_heart[NUMBER_SUBCARRIERS];
 float MRC_scalar_breath = 1;
 float MRC_scalar_heart = 1;
+
+int8_t (*CSI_samples)[SPEED_SPECTRUM_M_SAMPLES][NUMBER_SUBCARRIERS*2];
+static int16_t csi_current_first_element = -1;
+static int16_t csi_current_last_element = -1;
+
+#define CHANNEL_FREQUENCY 2412000000
+#define START_SPEED 0.0
+#define END_SPEED 1.0
+#define SPEED_STEP 0.05
+#define L 5
+#define SPECTRUM_LENGTH END_SPEED-START_SPEED/SPEED_STEP
+
 
 
 float calculate_variance(float *samples, int samples_length, float mean){ // calculates over the whole sample array
@@ -255,7 +281,6 @@ static void udp_client_task(void *pvParameters)
             // use the broadcast functions to generate the payload
             for(int i=0; i<broadcast_functions.elements-1; i++)
             {
-                ESP_LOGI(TAG, "function");
                 len = (*broadcast_functions.list[i])(buffer, len);
                 len += sprintf(buffer + len, ";"); // separate with semicolon
             }
@@ -357,26 +382,9 @@ float mrc_pca(float *MRC_ratios, float data[][NUMBER_SUBCARRIERS], int data_leng
             real_fft_plan->input[index] = data[data_index][subcarrier] - mean; 
             index--;
         }
-        
-        // if (subcarrier==6){
-        //     ESP_LOGI("mrc_pca", "initial x:");
-        //     print_x(real_fft_plan->input, use_last_n_elements);
-        // }
 
         // Execute transformation
         fft_execute(real_fft_plan);
-
-        // if (subcarrier==6){
-        //     ESP_LOGI("mrc_pca", "x after fft:");
-        //     print_x(real_fft_plan->output, use_last_n_elements);
-
-        //     // Now do something with the output
-        //     printf("DC component : %f\n", real_fft_plan->output[0]);  // DC is at [0]
-        //     for (int k = 1 ; k < real_fft_plan->size / 2 ; k++){
-        //         printf("%d-th freq : %f+j%f\n", k, real_fft_plan->output[2*k], real_fft_plan->output[2*k+1]);
-        //     }
-        //     printf("Middle component : %f\n", real_fft_plan->output[1]);  // N/2 is real and stored at [1]
-        // }
 
         // get the signal energy within the range of normal respiratory rates
         // get the signal energy outside of that range
@@ -386,19 +394,10 @@ float mrc_pca(float *MRC_ratios, float data[][NUMBER_SUBCARRIERS], int data_leng
             // calculate the amplitude
             x_psd[i] = powf(sqrtf(real_fft_plan->output[i*2] * real_fft_plan->output[i*2] + real_fft_plan->output[i*2+1] * real_fft_plan->output[i*2+1]), 2.0)/use_last_n_elements;
             
-            
             if(fft_frequencies[i]>lower_frequency_bound && fft_frequencies[i]<upper_frequency_bound){
-                // if (subcarrier==6){
-                //     ESP_LOGW("signal energy", "value: %f, adding: %f", signal_energy, x_psd[i]);
-                // }
                 signal_energy += x_psd[i]/use_last_n_elements;
-                
             }else{
-                // if (subcarrier==6){
-                //     ESP_LOGW("noise energy", "value: %f, adding: %f", noise_energy, x_psd[i]);
-                // }
                 noise_energy += x_psd[i]/use_last_n_elements;
-                
             }
         }
 
@@ -460,13 +459,9 @@ float fft_rate_estimation(float *data, int data_length, int data_current_last_in
         real_fft_plan->input[index] = data[data_index] - mean; 
         index--;
     }
-        
-    ESP_LOGW(TAG, "created input array");
 
     // Execute transformation
     fft_execute(real_fft_plan);
-
-    ESP_LOGW(TAG, "done fft");
     
     for (int i = 0 ; i < use_last_n_elements/2 ; i++) {
        x_amp[i] = sqrtf(real_fft_plan->output[i*2] * real_fft_plan->output[i*2] + real_fft_plan->output[i*2+1] * real_fft_plan->output[i*2+1]);
@@ -489,7 +484,6 @@ float fft_rate_estimation(float *data, int data_length, int data_current_last_in
 
     // get the frequency at the maximum index
     float max_frequency = fft_frequencies[maximum_index];
-    ESP_LOGW(TAG, "n %d,  maximum index %d, max frequency %f", use_last_n_elements, maximum_index, max_frequency);
 
     fft_destroy(real_fft_plan);
     free(x_amp);
@@ -500,6 +494,7 @@ float fft_rate_estimation(float *data, int data_length, int data_current_last_in
 static void csi_data_print_task(void *arg)
 {
     wifi_csi_info_t *info = NULL;
+
     char *buffer = malloc_or_die(8 * 1024);
     static uint32_t count = 0;
 
@@ -524,11 +519,10 @@ static void csi_data_print_task(void *arg)
 #endif
 
     while (xQueueReceive(g_csi_info_queue, &info, portMAX_DELAY)) {
-
-        //ESP_LOGI(TAG, "================ CSI RECV ================, count: %d, time %d", count, esp_timer_get_time());
         
-        size_t len = 0;
         wifi_pkt_rx_ctrl_t *rx_ctrl = &info->rx_ctrl;
+
+        // ESP_LOGI(TAG, "================ CSI RECV ================, count: %d, time received %lu, current time %llu", count, rx_ctrl->timestamp, esp_timer_get_time());
 
         float amplitude[NUMBER_SUBCARRIERS];
         // float phase[NUMBER_SUBCARRIERS];
@@ -593,12 +587,30 @@ static void csi_data_print_task(void *arg)
         if(!first_run){
             MAC_struct_check_if_indices_become_invalid(&MAC_breath, current_last_element);
         }
+
+        // append the new csi sample to the array
+        csi_current_last_element = get_next_index(csi_current_last_element, SPEED_SPECTRUM_M_SAMPLES);
+        if(csi_current_first_element == csi_current_last_element){
+            csi_current_first_element = get_next_index(csi_current_first_element, SPEED_SPECTRUM_M_SAMPLES);
+        }
+        if(csi_current_first_element == -1){
+            csi_current_first_element = 0;
+        }
+        memcpy((*CSI_samples)[csi_current_last_element], info->buf, NUMBER_SUBCARRIERS*2);
         
 
-        ESP_LOGI(TAG, "sti %f", sti);
+        // ESP_LOGI(TAG, "sti %f", sti);
         sti_array[current_last_element] = sti;
         memcpy((*amplitude_array)[current_last_element], amplitude, sizeof(amplitude));
         timestamp_array[current_last_element] = rx_ctrl->timestamp;
+
+        // calculate the speed spectrum every x seconds
+        // if(timestamp_array[current_last_element]>next_speed_spectrum_timestamp){
+        //     ESP_LOGW(TAG, "calculating speed spectrum");
+        //     float *speed_spectrum_out = malloc(sizeof(float) * (int)SPECTRUM_LENGTH);
+        //     doppler_music_speed_variance(CSI_samples, csi_current_first_element, csi_current_last_element, SPEED_SPECTRUM_M_SAMPLES, NUMBER_SUBCARRIERS, L, START_SPEED, END_SPEED, SPEED_STEP, CHANNEL_FREQUENCY, 1.0/CSI_RATE, speed_spectrum_out);
+        //     next_speed_spectrum_timestamp += speed_spectrum_every_x_seconds * SECONDS_TO_MICROSECONDS;
+        // }
 
         
         // calculate fused amplitude
@@ -608,7 +620,6 @@ static void csi_data_print_task(void *arg)
             fused_amplitude_breath += (amplitude[i] * (MRC_ratios_breath[i]/MRC_scalar_breath));
             fused_amplitude_heart += (amplitude[i] * (MRC_ratios_heart[i]/MRC_scalar_heart));
         }
-        
 
         // bandpass filter the fused amplitude
         bandpass_filter_apply(&breathing_filter, fused_amplitude_breath);
@@ -619,10 +630,9 @@ static void csi_data_print_task(void *arg)
 
 
         // MAC calculations
-        // get T by usign FFT on the filtered waveform
+        // get T by using FFT on the filtered waveform
 
         float T_breath = 3; // period in seconds 3 corresponds to 20 bpm
-
         float T_heart = 1; // period in seconds 1 corresponds to 60 bpm
 
         // get fft rate estimation every x seconds
@@ -631,7 +641,6 @@ static void csi_data_print_task(void *arg)
             MRC_scalar_breath = mrc_pca(MRC_ratios_breath, amplitude_array, MAX_NUMBER_OF_SAMPLES_KEPT, current_last_element, fft_count, BREATH_LOWER_FREQUENCY_BOUND, BREATH_UPPER_FREQUENCY_BOUND, breathing_bandpass_coefficients[0], breathing_bandpass_coefficients[1]);
             MRC_scalar_heart = mrc_pca(MRC_ratios_heart, amplitude_array, MAX_NUMBER_OF_SAMPLES_KEPT, current_last_element, fft_count, HEART_LOWER_FREQUENCY_BOUND, HEART_UPPER_FREQUENCY_BOUND, heart_bandpass_coefficients[0], heart_bandpass_coefficients[1]);
 
-            
             T_breath = fft_rate_estimation(&filtered_breath, MAX_NUMBER_OF_SAMPLES_KEPT, current_last_element, fft_count);
             T_heart = fft_rate_estimation(&filtered_heart, MAX_NUMBER_OF_SAMPLES_KEPT, current_last_element, fft_count);
             breath_features.fft_rate_over_window = T_breath;
@@ -641,18 +650,22 @@ static void csi_data_print_task(void *arg)
             ESP_LOGI(TAG, "fft rate estimated, breathing rate %f, heart rate %f, current timestamp %d, next timestamp %d", T_breath, T_heart, timestamp_array[current_last_element], next_fft_timestamp);
         }
 
-
         // MAC for breathing
         int T_timestamp = 60/T_breath * SECONDS_TO_MICROSECONDS;
 
-        bool found_up_intercept = false;
-        bool found_down_intercept = false;
+        bool breath_found_poi = false;
+        POI *new_breath_poi;
+
+        bool breath_found_up_intercept = false;
+        bool breath_found_down_intercept = false;
         bool found_peak = false;
         bool found_valley = false;
         int peak_index_difference_from_last_intercept = 0;
         int valley_index_difference_from_last_intercept = 0;
 
-        unsigned window_size = T_breath * SECONDS_TO_MICROSECONDS; // calculate from T -> timestamps are in microseconds
+        unsigned MAC_window_size = T_breath * SECONDS_TO_MICROSECONDS; // calculate from T -> timestamps are in microseconds
+        unsigned window_size = TIME_RANGE_TO_KEEP * SECONDS_TO_MICROSECONDS;
+
         // update the MAC
         // use the filtered amplitude for the MAC
         if(first_run){
@@ -678,7 +691,7 @@ static void csi_data_print_task(void *arg)
             dumb_running_mean_initialize(&breath_features.mean_down_stroke_amplitude, 30);
 
         }else{
-            running_mean_append(&MAC_breath.MAC, breathing_filter.out, rx_ctrl->timestamp, window_size);
+            running_mean_append(&MAC_breath.MAC, breathing_filter.out, rx_ctrl->timestamp, MAC_window_size);
 
             // check for intercepts
             int last_index = get_previous_index(current_last_element, MAX_NUMBER_OF_SAMPLES_KEPT);
@@ -718,7 +731,10 @@ static void csi_data_print_task(void *arg)
                                 index_dif++;
                                 i = get_next_index(i, MAX_NUMBER_OF_SAMPLES_KEPT);
                             }
-                            float breath_cycle_amplitude = fabs(filtered_breath[minimum_position]-filtered_breath[MAC_breath.peak_indices.list[MAC_breath.peak_indices.current_last_element_position]]);
+                            float breath_cycle_amplitude = MAC_breath.mean_peak_to_valley_amplitude.current_mean;
+                            if(breath_pois.number_of_elements > 0){
+                                breath_cycle_amplitude = fabs(filtered_breath[minimum_position]-filtered_breath[MAC_breath.peak_indices.list[MAC_breath.peak_indices.current_last_element_position]]);
+                            }
 
                             // check whether the amplitude is large enough
                             if(MAC_breath.mean_peak_to_valley_amplitude.current_number_of_elements > 3 && breath_cycle_amplitude <= MAC_breath.mean_peak_to_valley_amplitude.current_mean * 0.8){
@@ -748,8 +764,12 @@ static void csi_data_print_task(void *arg)
                                 }
 
                                 POI new_poi;
-                                poi_initialize(&new_poi, false, timestamp_array[minimum_position]-timestamp_array[MAC_breath.peak_indices.list[MAC_breath.peak_indices.current_last_element_position]], breath_cycle_amplitude, minimum_position);
-                                
+                                // handle case of first poi
+                                if(breath_pois.number_of_elements == 0){
+                                    poi_initialize(&new_poi, false, timestamp_array[minimum_position], filtered_breath[minimum_position], minimum_position);
+                                }else{
+                                    poi_initialize(&new_poi, false, timestamp_array[minimum_position]-timestamp_array[MAC_breath.peak_indices.list[MAC_breath.peak_indices.current_last_element_position]], breath_cycle_amplitude, minimum_position);
+                                }
 
                                 // calculate valley-related features
                                 // instantaneous rate, mean rate, mean down stroke length, mean down stoke amplitude, fractional amplitude, fractional time, up/down time ratio, up/down amplitude ratio
@@ -758,13 +778,17 @@ static void csi_data_print_task(void *arg)
                                 dumb_running_mean_append(&breath_features.mean_valley_rate_over_window, breath_features.instantaneous_valley_rate, timestamp_array[minimum_position], window_size);
                                 dumb_running_mean_append(&breath_features.mean_down_stroke_length, new_poi.time_difference_to_previous_poi, timestamp_array[minimum_position], window_size);
                                 dumb_running_mean_append(&breath_features.mean_down_stroke_amplitude, new_poi.amplitude_difference_to_previous_poi, timestamp_array[minimum_position], window_size);
-                                POI peak = breath_pois.list[current_last_element];
-                                breath_features.fractional_up_stroke_amplitude = peak.amplitude_difference_to_previous_poi / (peak.amplitude_difference_to_previous_poi + new_poi.amplitude_difference_to_previous_poi);
-                                breath_features.fractional_up_stroke_time = (float)peak.time_difference_to_previous_poi / (float)(peak.time_difference_to_previous_poi + new_poi.time_difference_to_previous_poi);
-                                breath_features.up_to_down_amplitude_ratio = peak.amplitude_difference_to_previous_poi / new_poi.amplitude_difference_to_previous_poi;
-                                breath_features.up_to_down_length_ratio = (float)peak.time_difference_to_previous_poi / (float)new_poi.time_difference_to_previous_poi;
 
+                                if(breath_pois.number_of_elements > 0){
+                                    POI peak = breath_pois.list[breath_pois.last_element_index];
+                                    breath_features.fractional_up_stroke_amplitude = peak.amplitude_difference_to_previous_poi / (peak.amplitude_difference_to_previous_poi + new_poi.amplitude_difference_to_previous_poi);
+                                    breath_features.fractional_up_stroke_time = (float)peak.time_difference_to_previous_poi / (float)(peak.time_difference_to_previous_poi + new_poi.time_difference_to_previous_poi);
+                                    breath_features.up_to_down_amplitude_ratio = peak.amplitude_difference_to_previous_poi / new_poi.amplitude_difference_to_previous_poi;
+                                    breath_features.up_to_down_length_ratio = (float)peak.time_difference_to_previous_poi / (float)new_poi.time_difference_to_previous_poi;
+                                }
                                 poi_list_append(&breath_pois, &new_poi);
+                                new_breath_poi = &new_poi;
+                                breath_found_poi = true;
                                 ESP_LOGI(TAG, "valley adding new poi, poi index %d, poi amp %f, poi peak %d, poi time %d", new_poi.index, new_poi.amplitude_difference_to_previous_poi, new_poi.is_peak, new_poi.time_difference_to_previous_poi);
 
 
@@ -772,8 +796,7 @@ static void csi_data_print_task(void *arg)
                                     calculate_variance_features(&breath_features, &breath_pois);
                                 } 
 
-                                // TODO perform processing to get further features
-                                found_up_intercept = true;
+                                breath_found_up_intercept = true;
                                 found_valley = true;
                                 ESP_LOGI(TAG, "up intercept added");
                             } 
@@ -817,7 +840,11 @@ static void csi_data_print_task(void *arg)
                                 index_dif++;
                                 i = get_next_index(i, MAX_NUMBER_OF_SAMPLES_KEPT);
                             }
-                            float breath_cycle_amplitude = fabs(filtered_breath[maximum_position]-filtered_breath[MAC_breath.valley_indices.list[MAC_breath.valley_indices.current_last_element_position]]);
+                            float breath_cycle_amplitude = MAC_breath.mean_peak_to_valley_amplitude.current_mean;
+                            if(breath_pois.number_of_elements > 0){
+                                breath_cycle_amplitude = fabs(filtered_breath[maximum_position]-filtered_breath[MAC_breath.valley_indices.list[MAC_breath.valley_indices.current_last_element_position]]);
+                            }
+
 
                             // check whether the amplitude is large enough - but only if enough amplitudes have been added yet, otherwise if the first amplitude is an outlier no further ones will be added
                             if(MAC_breath.mean_peak_to_valley_amplitude.current_number_of_elements > 3 && breath_cycle_amplitude <= MAC_breath.mean_peak_to_valley_amplitude.current_mean * 0.8){
@@ -836,8 +863,8 @@ static void csi_data_print_task(void *arg)
 
                                 MAC_breath.peak_to_valley_last_index = get_next_index(MAC_breath.peak_to_valley_last_index, MAC_breath.array_len);
                                 MAC_breath.peak_to_valley_amplitudes[MAC_breath.peak_to_valley_last_index] = breath_cycle_amplitude;
-                                // store the found valley in the corresponding list
-                                circular_list_append(&MAC_breath.valley_indices, maximum_position);
+                                // store the found peak in the corresponding list
+                                circular_list_append(&MAC_breath.peak_indices, maximum_position);
                                 // update the peak-valley-mean
                                 if(!MAC_breath.running_mean_initialized){
                                     running_mean_initialize(&MAC_breath.mean_peak_to_valley_amplitude, breath_cycle_amplitude, current_last_element, timestamp_array, MAC_breath.peak_to_valley_amplitudes, MAX_NUMBER_OF_SAMPLES_KEPT);
@@ -847,8 +874,12 @@ static void csi_data_print_task(void *arg)
                                 }
 
                                 POI new_poi;
-                                poi_initialize(&new_poi, false, timestamp_array[maximum_position]-timestamp_array[MAC_breath.valley_indices.list[MAC_breath.valley_indices.current_last_element_position]], breath_cycle_amplitude, maximum_position);
-                                
+                                // handle case of first poi
+                                if(breath_pois.number_of_elements == 0){
+                                    poi_initialize(&new_poi, true, timestamp_array[maximum_position], filtered_breath[maximum_position], maximum_position);
+                                }else{
+                                    poi_initialize(&new_poi, true, timestamp_array[maximum_position]-timestamp_array[MAC_breath.valley_indices.list[MAC_breath.valley_indices.current_last_element_position]], breath_cycle_amplitude, maximum_position);
+                                }
 
                                 // calculate peak-related features
                                 // instantaneous rate, mean rate, mean up stroke length, mean up stoke amplitude
@@ -861,13 +892,14 @@ static void csi_data_print_task(void *arg)
                                 ESP_LOGI(TAG, "adding new poi, poi index %d, poi amp %f, poi peak %d, poi time %d", new_poi.index, new_poi.amplitude_difference_to_previous_poi, new_poi.is_peak, new_poi.time_difference_to_previous_poi);
 
                                 poi_list_append(&breath_pois, &new_poi);
+                                new_breath_poi = &new_poi;
+                                breath_found_poi = true;
 
                                 if(breath_pois.number_of_elements > 1){
                                     calculate_variance_features(&breath_features, &breath_pois);
                                 } 
 
-                                // TODO perform processing to get further features
-                                found_down_intercept = true;
+                                breath_found_down_intercept = true;
                                 found_peak = true;
                                 ESP_LOGI(TAG, "down intercept added");
                             } 
@@ -876,7 +908,7 @@ static void csi_data_print_task(void *arg)
                     MAC_breath.first_intercept = false;
                 }
             }
-            printf("breathing data,%d,%f,%f,%d,%d,%d,%d,%d,%d\n", timestamp_array[current_last_element], filtered_breath[current_last_element], MAC_breath.MAC.current_mean, found_up_intercept, found_down_intercept, found_valley, valley_index_difference_from_last_intercept, found_peak, peak_index_difference_from_last_intercept);
+            ESP_LOGD(TAG, "breathing data,%d,%f,%f,%d,%d,%d,%d,%d,%d\n", timestamp_array[current_last_element], filtered_breath[current_last_element], MAC_breath.MAC.current_mean, breath_found_up_intercept, breath_found_down_intercept, found_valley, valley_index_difference_from_last_intercept, found_peak, peak_index_difference_from_last_intercept);
             
         }
         
@@ -884,14 +916,17 @@ static void csi_data_print_task(void *arg)
         // MAC for heart
         T_timestamp = 60/T_heart * SECONDS_TO_MICROSECONDS;
 
-        found_up_intercept = false;
-        found_down_intercept = false;
+        bool heart_found_poi = false;
+        POI *new_heart_poi;
+
+        bool heart_found_up_intercept = false;
+        bool heart_found_down_intercept = false;
         found_peak = false;
         found_valley = false;
         peak_index_difference_from_last_intercept = 0;
         valley_index_difference_from_last_intercept = 0;
 
-        window_size = T_heart * SECONDS_TO_MICROSECONDS; // calculate from T -> timestamps are in microseconds
+        MAC_window_size = T_heart * SECONDS_TO_MICROSECONDS; // calculate from T -> timestamps are in microseconds
         // update the MAC
         // use the filtered amplitude for the MAC
         if(first_run){
@@ -918,7 +953,7 @@ static void csi_data_print_task(void *arg)
 
             first_run = false;
         }else{
-            running_mean_append(&MAC_heart.MAC, heart_filter.out, rx_ctrl->timestamp, window_size);
+            running_mean_append(&MAC_heart.MAC, heart_filter.out, rx_ctrl->timestamp, MAC_window_size);
 
             // check for intercepts
             int last_index = get_previous_index(current_last_element, MAX_NUMBER_OF_SAMPLES_KEPT);
@@ -958,7 +993,10 @@ static void csi_data_print_task(void *arg)
                                 index_dif++;
                                 i = get_next_index(i, MAX_NUMBER_OF_SAMPLES_KEPT);
                             }
-                            float heart_cycle_amplitude = fabs(filtered_heart[minimum_position]-filtered_heart[MAC_heart.peak_indices.list[MAC_heart.peak_indices.current_last_element_position]]);
+                            float heart_cycle_amplitude = MAC_heart.mean_peak_to_valley_amplitude.current_mean;
+                            if(heart_pois.number_of_elements > 0){
+                                heart_cycle_amplitude = fabs(filtered_heart[minimum_position]-filtered_heart[MAC_heart.peak_indices.list[MAC_heart.peak_indices.current_last_element_position]]);
+                            }
 
                             // check whether the amplitude is large enough
                             if(MAC_heart.mean_peak_to_valley_amplitude.current_number_of_elements > 3 && heart_cycle_amplitude <= MAC_heart.mean_peak_to_valley_amplitude.current_mean * 0.8){
@@ -988,8 +1026,13 @@ static void csi_data_print_task(void *arg)
                                 }
 
                                 POI new_poi;
-                                poi_initialize(&new_poi, false, timestamp_array[minimum_position]-timestamp_array[MAC_heart.peak_indices.list[MAC_heart.peak_indices.current_last_element_position]], heart_cycle_amplitude, minimum_position);
-                                
+
+                                // handle case of first poi
+                                if(heart_pois.number_of_elements == 0){
+                                    poi_initialize(&new_poi, false, timestamp_array[minimum_position], filtered_heart[minimum_position], minimum_position);
+                                }else{
+                                    poi_initialize(&new_poi, false, timestamp_array[minimum_position]-timestamp_array[MAC_heart.peak_indices.list[MAC_heart.peak_indices.current_last_element_position]], heart_cycle_amplitude, minimum_position);
+                                }
 
                                 // calculate valley-related features
                                 // instantaneous rate, mean rate, mean down stroke length, mean down stoke amplitude, fractional amplitude, fractional time, up/down time ratio, up/down amplitude ratio
@@ -998,13 +1041,18 @@ static void csi_data_print_task(void *arg)
                                 dumb_running_mean_append(&heart_features.mean_valley_rate_over_window, heart_features.instantaneous_valley_rate, timestamp_array[minimum_position], window_size);
                                 dumb_running_mean_append(&heart_features.mean_down_stroke_length, new_poi.time_difference_to_previous_poi, timestamp_array[minimum_position], window_size);
                                 dumb_running_mean_append(&heart_features.mean_down_stroke_amplitude, new_poi.amplitude_difference_to_previous_poi, timestamp_array[minimum_position], window_size);
-                                POI peak = heart_pois.list[current_last_element];
-                                heart_features.fractional_up_stroke_amplitude = peak.amplitude_difference_to_previous_poi / (peak.amplitude_difference_to_previous_poi + new_poi.amplitude_difference_to_previous_poi);
-                                heart_features.fractional_up_stroke_time = (float)peak.time_difference_to_previous_poi / (float)(peak.time_difference_to_previous_poi + new_poi.time_difference_to_previous_poi);
-                                heart_features.up_to_down_amplitude_ratio = peak.amplitude_difference_to_previous_poi / new_poi.amplitude_difference_to_previous_poi;
-                                heart_features.up_to_down_length_ratio = (float)peak.time_difference_to_previous_poi / (float)new_poi.time_difference_to_previous_poi;
+                                
+                                if(heart_pois.number_of_elements > 0){
+                                    POI peak = heart_pois.list[heart_pois.last_element_index];
+                                    heart_features.fractional_up_stroke_amplitude = peak.amplitude_difference_to_previous_poi / (peak.amplitude_difference_to_previous_poi + new_poi.amplitude_difference_to_previous_poi);
+                                    heart_features.fractional_up_stroke_time = (float)peak.time_difference_to_previous_poi / (float)(peak.time_difference_to_previous_poi + new_poi.time_difference_to_previous_poi);
+                                    heart_features.up_to_down_amplitude_ratio = peak.amplitude_difference_to_previous_poi / new_poi.amplitude_difference_to_previous_poi;
+                                    heart_features.up_to_down_length_ratio = (float)peak.time_difference_to_previous_poi / (float)new_poi.time_difference_to_previous_poi;
+                                }
 
                                 poi_list_append(&heart_pois, &new_poi);
+                                new_heart_poi = &new_poi;
+                                heart_found_poi = true;
                                 ESP_LOGI(TAG, "valley adding new poi, poi index %d, poi amp %f, poi peak %d, poi time %d", new_poi.index, new_poi.amplitude_difference_to_previous_poi, new_poi.is_peak, new_poi.time_difference_to_previous_poi);
 
 
@@ -1012,8 +1060,7 @@ static void csi_data_print_task(void *arg)
                                     calculate_variance_features(&heart_features, &heart_pois);
                                 } 
 
-                                // TODO perform processing to get further features
-                                found_up_intercept = true;
+                                heart_found_up_intercept = true;
                                 found_valley = true;
                                 ESP_LOGI(TAG, "up intercept added");
                             } 
@@ -1057,7 +1104,10 @@ static void csi_data_print_task(void *arg)
                                 index_dif++;
                                 i = get_next_index(i, MAX_NUMBER_OF_SAMPLES_KEPT);
                             }
-                            float heart_cycle_amplitude = fabs(filtered_heart[maximum_position]-filtered_heart[MAC_heart.valley_indices.list[MAC_heart.valley_indices.current_last_element_position]]);
+                            float heart_cycle_amplitude = MAC_heart.mean_peak_to_valley_amplitude.current_mean;
+                            if(heart_pois.number_of_elements > 0){
+                                heart_cycle_amplitude = fabs(filtered_heart[maximum_position]-filtered_heart[MAC_heart.valley_indices.list[MAC_heart.valley_indices.current_last_element_position]]);
+                            }
 
                             // check whether the amplitude is large enough - but only if enough amplitudes have been added yet, otherwise if the first amplitude is an outlier no further ones will be added
                             if(MAC_heart.mean_peak_to_valley_amplitude.current_number_of_elements > 3 && heart_cycle_amplitude <= MAC_heart.mean_peak_to_valley_amplitude.current_mean * 0.8){
@@ -1076,8 +1126,8 @@ static void csi_data_print_task(void *arg)
 
                                 MAC_heart.peak_to_valley_last_index = get_next_index(MAC_heart.peak_to_valley_last_index, MAC_heart.array_len);
                                 MAC_heart.peak_to_valley_amplitudes[MAC_heart.peak_to_valley_last_index] = heart_cycle_amplitude;
-                                // store the found valley in the corresponding list
-                                circular_list_append(&MAC_heart.valley_indices, maximum_position);
+                                // store the found peak in the corresponding list
+                                circular_list_append(&MAC_heart.peak_indices, maximum_position);
                                 // update the peak-valley-mean
                                 if(!MAC_heart.running_mean_initialized){
                                     running_mean_initialize(&MAC_heart.mean_peak_to_valley_amplitude, heart_cycle_amplitude, current_last_element, timestamp_array, MAC_heart.peak_to_valley_amplitudes, MAX_NUMBER_OF_SAMPLES_KEPT);
@@ -1087,8 +1137,12 @@ static void csi_data_print_task(void *arg)
                                 }
 
                                 POI new_poi;
-                                poi_initialize(&new_poi, false, timestamp_array[maximum_position]-timestamp_array[MAC_heart.valley_indices.list[MAC_heart.valley_indices.current_last_element_position]], heart_cycle_amplitude, maximum_position);
-                                
+                                // handle case of first poi
+                                if(heart_pois.number_of_elements == 0){
+                                    poi_initialize(&new_poi, true, timestamp_array[maximum_position], filtered_heart[maximum_position], maximum_position);
+                                }else{
+                                    poi_initialize(&new_poi, true, timestamp_array[maximum_position]-timestamp_array[MAC_heart.valley_indices.list[MAC_heart.valley_indices.current_last_element_position]], heart_cycle_amplitude, maximum_position);
+                                }
 
                                 // calculate peak-related features
                                 // instantaneous rate, mean rate, mean up stroke length, mean up stoke amplitude
@@ -1101,13 +1155,14 @@ static void csi_data_print_task(void *arg)
                                 ESP_LOGI(TAG, "adding new poi, poi index %d, poi amp %f, poi peak %d, poi time %d", new_poi.index, new_poi.amplitude_difference_to_previous_poi, new_poi.is_peak, new_poi.time_difference_to_previous_poi);
 
                                 poi_list_append(&heart_pois, &new_poi);
+                                new_heart_poi = &new_poi;
+                                heart_found_poi = true;
 
                                 if(heart_pois.number_of_elements > 1){
                                     calculate_variance_features(&heart_features, &heart_pois);
                                 } 
 
-                                // TODO perform processing to get further features
-                                found_down_intercept = true;
+                                heart_found_down_intercept = true;
                                 found_peak = true;
                                 ESP_LOGI(TAG, "down intercept added");
                             } 
@@ -1116,7 +1171,7 @@ static void csi_data_print_task(void *arg)
                     MAC_heart.first_intercept = false;
                 }
             }
-            printf("heart data,%d,%f,%f,%d,%d,%d,%d,%d,%d\n", timestamp_array[current_last_element], filtered_heart[current_last_element], MAC_heart.MAC.current_mean, found_up_intercept, found_down_intercept, found_valley, valley_index_difference_from_last_intercept, found_peak, peak_index_difference_from_last_intercept);
+            ESP_LOGD(TAG, "heart data,%d,%f,%f,%d,%d,%d,%d,%d,%d\n", timestamp_array[current_last_element], filtered_heart[current_last_element], MAC_heart.MAC.current_mean, heart_found_up_intercept, heart_found_down_intercept, found_valley, valley_index_difference_from_last_intercept, found_peak, peak_index_difference_from_last_intercept);
             
         }
         
@@ -1153,18 +1208,101 @@ static void csi_data_print_task(void *arg)
         //     }
         //     printf("%s", buffer1);
         //     free(buffer1);
-            
         // }
 
 
 #if defined(PRINT_CSI_TO_SERIAL) || defined(WRITE_TO_SD_CARD)
+        size_t len = 0;
         if (!count) {
             ESP_LOGI(TAG, "================ CSI RECV ================");
-            len += sprintf(buffer + len, "type,sequence,timestamp,source_mac,first_word_invalid,len,rssi,rate,sig_mode,mcs,bandwidth,smoothing,not_sounding,aggregation,stbc,fec_coding,sgi,noise_floor,ampdu_cnt,channel,secondary_channel,local_timestamp,ant,sig_len,rx_state,data\n");
+            len += sprintf(buffer + len, "type");
+            if(SENSE_PRINT_STI){
+                len += sprintf(buffer + len, ",sti");
+            }
+
+            if(SENSE_PRINT_FUSED_HEART){
+                len += sprintf(buffer + len, ",fused_heart_amplitude");
+            }
+
+            if(SENSE_PRINT_FUSED_BREATH){
+                len += sprintf(buffer + len, ",fused_breath_amplitude");
+            }
+
+            if(SENSE_PRINT_FILTERED_HEART){
+                len += sprintf(buffer + len, ",filtered_heart");
+            }
+
+            if(SENSE_PRINT_FILTERED_BREATH){
+                len += sprintf(buffer + len, ",filtered_breath");
+            }
+
+            if(SENSE_PRINT_HEART_FEATURES){
+                len += sprintf(buffer + len, ",heart_features");
+            }
+
+            if(SENSE_PRINT_BREATHING_FEATURES){
+                len += sprintf(buffer + len, ",breath_features");
+            }
+
+            if(SENSE_PRINT_HEART_POI){
+                len += sprintf(buffer + len, ",heart_poi_found,new_heart_poi");
+            }
+
+            if(SENSE_PRINT_BREATHING_POI){
+                len += sprintf(buffer + len, ",breath_poi_found,new_breath_poi");
+            }
+            len += sprintf(buffer + len, ",sequence,timestamp,source_mac,first_word_invalid,len,rssi,rate,sig_mode,mcs,bandwidth,smoothing,not_sounding,aggregation,stbc,fec_coding,sgi,noise_floor,ampdu_cnt,channel,secondary_channel,local_timestamp,ant,sig_len,rx_state,data\n");
+        }
+        
+        len += sprintf(buffer + len, "CSI_DATA");
+        if(SENSE_PRINT_STI){
+            len += sprintf(buffer + len, ",%f", sti);
+        }
+
+        if(SENSE_PRINT_FUSED_HEART){
+            len += sprintf(buffer + len, ",%f", fused_amplitude_heart);
+        }
+
+        if(SENSE_PRINT_FUSED_BREATH){
+            len += sprintf(buffer + len, ",%f", fused_amplitude_breath);
+        }
+
+        if(SENSE_PRINT_FILTERED_HEART){
+            len += sprintf(buffer + len, ",%f", filtered_heart[current_last_element]);
+        }
+
+        if(SENSE_PRINT_FILTERED_BREATH){
+            len += sprintf(buffer + len, ",%f", filtered_breath[current_last_element]);
+        }
+
+        if(SENSE_PRINT_HEART_FEATURES){
+            len += sprintf(buffer + len, ",[%f %f %f %f %f %f %f %f %f %f %f %f %f %f %f %f %f %f %f]", heart_features.instantaneous_peak_rate, heart_features.instantaneous_valley_rate, heart_features.mean_peak_rate_over_window.current_mean, heart_features.mean_valley_rate_over_window.current_mean, heart_features.fft_rate_over_window, heart_features.variance_of_peak_rate_in_window, heart_features.variance_of_valley_rate_in_window, heart_features.mean_up_stroke_length.current_mean, heart_features.mean_down_stroke_length.current_mean, heart_features.up_stroke_length_variance, heart_features.down_stroke_length_variance, heart_features.up_to_down_length_ratio, heart_features.fractional_up_stroke_time, heart_features.mean_up_stroke_amplitude.current_mean, heart_features.mean_down_stroke_amplitude.current_mean, heart_features.up_stroke_amplitude_variance, heart_features.down_stroke_amplitude_variance, heart_features.up_to_down_amplitude_ratio, heart_features.fractional_up_stroke_amplitude);
+        }
+
+        if(SENSE_PRINT_BREATHING_FEATURES){
+            len += sprintf(buffer + len, ",[%f %f %f %f %f %f %f %f %f %f %f %f %f %f %f %f %f %f %f]", breath_features.instantaneous_peak_rate, breath_features.instantaneous_valley_rate, breath_features.mean_peak_rate_over_window.current_mean, breath_features.mean_valley_rate_over_window.current_mean, breath_features.fft_rate_over_window, breath_features.variance_of_peak_rate_in_window, breath_features.variance_of_valley_rate_in_window, breath_features.mean_up_stroke_length.current_mean, breath_features.mean_down_stroke_length.current_mean, breath_features.up_stroke_length_variance, breath_features.down_stroke_length_variance, breath_features.up_to_down_length_ratio, breath_features.fractional_up_stroke_time, breath_features.mean_up_stroke_amplitude.current_mean, breath_features.mean_down_stroke_amplitude.current_mean, breath_features.up_stroke_amplitude_variance, breath_features.down_stroke_amplitude_variance, breath_features.up_to_down_amplitude_ratio, breath_features.fractional_up_stroke_amplitude);
+        }
+
+        if(SENSE_PRINT_HEART_POI){
+            len += sprintf(buffer + len, ",%d", heart_found_poi);
+            if(heart_found_poi){
+                len += sprintf(buffer + len, ",[%d %u %f %d]", new_heart_poi->is_peak, new_heart_poi->time_difference_to_previous_poi, new_heart_poi->amplitude_difference_to_previous_poi, new_heart_poi->index);
+            }else{
+                len += sprintf(buffer + len, ",[]");
+            }
+        }
+
+        if(SENSE_PRINT_BREATHING_POI){
+            len += sprintf(buffer + len, ",%d", breath_found_poi);
+            if(breath_found_poi){
+                len += sprintf(buffer + len, ",[%d %u %f %d]", new_breath_poi->is_peak, new_breath_poi->time_difference_to_previous_poi, new_breath_poi->amplitude_difference_to_previous_poi, new_breath_poi->index);
+            }else{
+                len += sprintf(buffer + len, ",[]");
+            }
         }
 
 
-        len += sprintf(buffer + len, "CSI_DATA,%d,%u," MACSTR ",%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%u,%d,%d,%d,%d,%d,",
+        len += sprintf(buffer + len, ",%d,%u," MACSTR ",%d,%d,%d,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%d,%u,%u,%u,%u,%u,%u,%u,",
                     count, esp_log_timestamp(),
                     MAC2STR(info->mac), info->first_word_invalid, info->len, rx_ctrl->rssi, rx_ctrl->rate, rx_ctrl->sig_mode,
                     rx_ctrl->mcs, rx_ctrl->cwb, rx_ctrl->smoothing, rx_ctrl->not_sounding,
@@ -1188,9 +1326,7 @@ static void csi_data_print_task(void *arg)
 #endif
         
 #ifdef WRITE_TO_SD_CARD
-        //ESP_LOGI(TAG, "================ printing to file ================");
         fprintf(file, "%s", buffer);
-        
 
         write_count++;
         if (write_count > WRITE_FILE_AFTER_RECEIVED_CSI_NUMBER)
@@ -1206,8 +1342,6 @@ static void csi_data_print_task(void *arg)
 #endif
         
         free(info);
-        
-        
     }
 
     free(buffer);
@@ -1295,8 +1429,7 @@ void wifi_init_softap(void)
 
     // enable CSI collection
     esp_err_t ret = esp_wifi_set_csi(true);
-    ESP_LOGI(TAG, "csi returned%d",
-             ret);
+    ESP_LOGI(TAG, "csi returned %d", ret);
 
 
 }
@@ -1378,12 +1511,13 @@ void app_main(void)
     esp_wifi_config_80211_tx_rate(WIFI_IF_AP, WIFI_PHY_RATE_MCS7_SGI);
     esp_wifi_set_bandwidth(WIFI_IF_AP, WIFI_BW_HT40);
 
-    arr_alloc(MAX_NUMBER_OF_SAMPLES_KEPT, NUMBER_SUBCARRIERS, &amplitude_array);
+    float_arr_alloc(MAX_NUMBER_OF_SAMPLES_KEPT, NUMBER_SUBCARRIERS, &amplitude_array);
+    int8_arr_alloc(SPEED_SPECTRUM_M_SAMPLES, NUMBER_SUBCARRIERS*2, &CSI_samples);
 
     // setup_broadcast_messages();
     analysis_init();
 
     g_csi_info_queue = xQueueCreate(256, sizeof(void *));
-    xTaskCreate(csi_data_print_task, "csi_data_print", 4 * 1024, NULL, 0, NULL);
+    xTaskCreate(csi_data_print_task, "csi_data_print", 8 * 1024, NULL, 0, NULL);
     //xTaskCreate(udp_client_task, "udp_client_task", 4 * 1024, NULL, 0, NULL);
 }

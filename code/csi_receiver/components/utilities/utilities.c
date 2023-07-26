@@ -1,3 +1,4 @@
+#include "utilities.h"
 #include <stdio.h>
 #include "esp_system.h"
 #include "esp_log.h"
@@ -5,124 +6,7 @@
 #include "float.h"
 #include <string.h>
 
-
-typedef struct
-{
-    int length;
-    int *list;
-    int current_last_element_position;
-    int current_first_element_position;
-}CircularIntList;
-
-// used for easy definition of things to broadcast
-typedef size_t (*functype)(char *buffer, size_t len);
-typedef struct
-{
-    size_t len;
-    size_t elements;
-    functype *list;
-} FunctionList;
-
-
-typedef struct
-{
-    float *a_coefficients;
-    float *b_coefficients;
-    int number_coefficients;
-    float *last_inputs;
-    float *last_outputs;
-    int last_position;
-    float out;
-    int received_inputs;
-} BandpassIIRFilter;
-
-typedef struct
-{
-    int last_sample_index;
-    int array_size;
-    unsigned *time_array;
-    float *value_array;
-    int current_number_of_elements;
-    float current_sum;
-    float current_mean;
-} RunningMean;
-
-typedef struct
-{
-    int last_sample_index;
-    int newest_sample_index;
-    int array_size;
-    unsigned *time_array;
-    float *value_array;
-    int current_number_of_elements;
-    float current_sum;
-    float current_mean;
-} DumbRunningMean;
-
-typedef struct
-{
-    int index;
-    bool is_up_intercept;
-} Intercept;
-
-typedef struct
-{
-    RunningMean MAC;
-    Intercept *intercepts;
-    int current_last_intercept;
-    int current_first_intercept;
-    RunningMean mean_peak_to_valley_amplitude;
-    float *peak_to_valley_amplitudes;
-    int peak_to_valley_last_index;
-    CircularIntList peak_indices;
-    CircularIntList valley_indices;
-    int array_len;
-    bool running_mean_initialized;
-    bool first_intercept;
-} MAC_struct;
-
-typedef struct
-{   
-    float instantaneous_peak_rate;
-    float instantaneous_valley_rate;
-    DumbRunningMean mean_peak_rate_over_window;
-    DumbRunningMean mean_valley_rate_over_window; // these two means are redundant because they can easily be calculated from the mean_stroke_length
-    float fft_rate_over_window;
-    float variance_of_peak_rate_in_window;
-    float variance_of_valley_rate_in_window;
-
-    DumbRunningMean mean_up_stroke_length;
-    DumbRunningMean mean_down_stroke_length;
-    float up_stroke_length_variance;
-    float down_stroke_length_variance;
-    float up_to_down_length_ratio;
-    float fractional_up_stroke_time;
-
-    DumbRunningMean mean_up_stroke_amplitude;
-    DumbRunningMean mean_down_stroke_amplitude;
-    float up_stroke_amplitude_variance;
-    float down_stroke_amplitude_variance;
-    float up_to_down_amplitude_ratio;
-    float fractional_up_stroke_amplitude;
-} Features;
-
-typedef struct
-{
-    bool is_peak;
-    unsigned time_difference_to_previous_poi;
-    float amplitude_difference_to_previous_poi;
-    int index;
-} POI;
-
-typedef struct
-{
-    POI *list;
-    int first_element_index;
-    int last_element_index;
-    int length;
-    int number_of_elements;
-} POI_List;
-
+#define SECONDS_TO_MICROSECONDS 1000000
 
 void *malloc_or_die(size_t size_to_allocate){
     void *p = malloc(size_to_allocate);
@@ -133,9 +17,14 @@ void *malloc_or_die(size_t size_to_allocate){
     return p;
 }
 
-void arr_alloc(size_t x, size_t y, float(**aptr)[x][y])
+void float_arr_alloc(size_t x, size_t y, float(**aptr)[x][y])
 {
   *aptr = malloc_or_die( sizeof(float[x][y]) ); // allocate a true 2D array
+}
+
+void int8_arr_alloc(size_t x, size_t y, int8_t(**aptr)[x][y])
+{
+  *aptr = malloc_or_die( sizeof(int8_t[x][y]) ); // allocate a true 2D array
 }
 
 int get_previous_index(int current_index, int array_length){
@@ -186,6 +75,34 @@ void append_to_function_list(FunctionList *l, functype function_to_append){
         l->list = realloc(l->list, l->len * sizeof(functype));
     }
     l->list[l->elements++] = function_to_append;
+}
+
+void create_list_int(ListInt *l, size_t initialSize){
+    l->list = malloc_or_die(initialSize*sizeof(int));
+    l->length = initialSize;
+    l->elements = 0;
+}
+
+void append_to_list_int(ListInt *l, int new_element){
+    if(l->elements == l->length){
+        l->length *= 1.2;
+        l->list = realloc(l->list, l->length * sizeof(int));
+    }
+    l->list[l->elements++] = new_element;
+}
+
+void create_list_float(ListInt *l, size_t initialSize){
+    l->list = malloc_or_die(initialSize*sizeof(float));
+    l->length = initialSize;
+    l->elements = 0;
+}
+
+void append_to_list_float(ListFloat *l, float new_element){
+    if(l->elements == l->length){
+        l->length *= 1.2;
+        l->list = realloc(l->list, l->length * sizeof(float));
+    }
+    l->list[l->elements++] = new_element;
 }
 
 void bandpass_filter_initialize(BandpassIIRFilter *f, float *b_coefficients, float *a_coefficients, int number_coefficients){
@@ -253,8 +170,8 @@ void running_mean_append(RunningMean *r, float input, unsigned input_timestamp, 
 }
 
 void dumb_running_mean_initialize(DumbRunningMean *r, int array_size){
-    r->last_sample_index = 0;
-    r->newest_sample_index = 0;
+    r->last_sample_index = -1;
+    r->newest_sample_index = -1;
     r->time_array = malloc_or_die(sizeof(unsigned) * array_size);
     r->value_array = malloc_or_die(sizeof(float) * array_size);
     r->current_number_of_elements = 0;
@@ -270,13 +187,24 @@ void dumb_running_mean_append(DumbRunningMean *r, float input, unsigned input_ti
         r->current_number_of_elements -= 1;
         r->last_sample_index = get_next_index(r->last_sample_index, r->array_size);
     }
+    if(r->current_number_of_elements == 0){
+        r->last_sample_index = -1;
+        r->newest_sample_index = -1;
+    }
+
     // append the newest sample to the array
     int index = get_next_index(r->newest_sample_index, r->array_size);
+    if(index == r->last_sample_index){
+        r->current_sum -= r->value_array[r->last_sample_index];
+        r->current_number_of_elements -= 1;
+        r->last_sample_index = get_next_index(r->last_sample_index, r->array_size);
+    }
     r->time_array[index] = input_timestamp;
     r->value_array[index] = input;
-    if(index == r->last_sample_index){
-        r->last_sample_index = get_next_index(r->last_sample_index, r->array_size);
-        r->current_number_of_elements -= 1;
+    r->newest_sample_index = index;
+
+    if(r->last_sample_index==-1){
+        r->last_sample_index=0;
     }
 
     r->current_sum += input;
@@ -351,7 +279,7 @@ void poi_list_append(POI_List *poi_list, POI *poi){
 void calculate_variance_features(Features *f, POI_List *pois){
     // assumes that the means are already set
     // calculate all peak-related features
-    ESP_LOGE("calculate_variance_features", "start");
+    ESP_LOGD("calculate_variance_features", "start");
     int number_of_pois = 0;
     float peak_rate_variance = 0;
     float up_stroke_length_variance = 0;
@@ -368,14 +296,34 @@ void calculate_variance_features(Features *f, POI_List *pois){
     for(int i=pois->first_element_index; i!=pois->last_element_index; i=get_next_index(i, pois->length)){
         if((check_even_indices && i%2==0) || (!check_even_indices && i%2!=0)){
             number_of_pois++;
-            peak_rate_variance += powf(pois->list[i].time_difference_to_previous_poi - f->mean_peak_rate_over_window.current_mean, 2);
+            peak_rate_variance += powf((float)(60.0 / ((double)pois->list[i].time_difference_to_previous_poi / (double)SECONDS_TO_MICROSECONDS)) - f->mean_peak_rate_over_window.current_mean, 2);
             up_stroke_length_variance += powf(pois->list[i].time_difference_to_previous_poi - f->mean_up_stroke_length.current_mean, 2);
             up_stroke_amplitude_variance += powf(pois->list[i].amplitude_difference_to_previous_poi - f->mean_up_stroke_amplitude.current_mean, 2);
+            ESP_LOGD("calculate_variance_features", "peaks i %d, nr pois %d, rate var %f  mean %f, length var %f  mean %f,  amplitude variance %f  mean %f", i, number_of_pois, peak_rate_variance, f->mean_peak_rate_over_window.current_mean,  up_stroke_length_variance, f->mean_up_stroke_length.current_mean, up_stroke_amplitude_variance, f->mean_up_stroke_amplitude.current_mean);
+
         }
     }
+    // check the last index
+    int i = pois->last_element_index;
+    if((check_even_indices && i%2==0) || (!check_even_indices && i%2!=0)){
+        number_of_pois++;
+        float rate = (float)(60.0 / ((double)pois->list[i].time_difference_to_previous_poi / (double)SECONDS_TO_MICROSECONDS));
+        ESP_LOGD("r", "elements in list %d, index %d, rate %f, timedif %u", pois->number_of_elements, i, rate, pois->list[i].time_difference_to_previous_poi);
+        peak_rate_variance += powf(rate - f->mean_peak_rate_over_window.current_mean, 2);
+        up_stroke_length_variance += powf(pois->list[i].time_difference_to_previous_poi - f->mean_up_stroke_length.current_mean, 2);
+        up_stroke_amplitude_variance += powf(pois->list[i].amplitude_difference_to_previous_poi - f->mean_up_stroke_amplitude.current_mean, 2);
+        ESP_LOGD("calculate_variance_features", "peaks i %d, nr pois %d, rate var %f  mean %f, length var %f  mean %f,  amplitude variance %f  mean %f", i, number_of_pois, peak_rate_variance, f->mean_peak_rate_over_window.current_mean,  up_stroke_length_variance, f->mean_up_stroke_length.current_mean, up_stroke_amplitude_variance, f->mean_up_stroke_amplitude.current_mean);
+
+    }
+
     peak_rate_variance /= number_of_pois;
     up_stroke_length_variance /= number_of_pois;
     up_stroke_amplitude_variance /= number_of_pois;
+    if(number_of_pois==0){
+        peak_rate_variance = -1;
+        up_stroke_length_variance = -1;
+        up_stroke_amplitude_variance = -1;
+    }
 
     f->variance_of_peak_rate_in_window = peak_rate_variance;
     f->up_stroke_length_variance = up_stroke_length_variance;
@@ -389,17 +337,39 @@ void calculate_variance_features(Features *f, POI_List *pois){
     for(int i=pois->first_element_index; i!=pois->last_element_index; i=get_next_index(i, pois->length)){
         if((check_even_indices && i%2!=0) || (!check_even_indices && i%2==0)){
             number_of_pois++;
-            valley_rate_variance += powf(pois->list[i].time_difference_to_previous_poi - f->mean_valley_rate_over_window.current_mean, 2);
+            valley_rate_variance += powf((float) (60.0 / ((double)pois->list[i].time_difference_to_previous_poi / (double)SECONDS_TO_MICROSECONDS)) - f->mean_valley_rate_over_window.current_mean, 2);
             down_stroke_length_variance += powf(pois->list[i].time_difference_to_previous_poi - f->mean_down_stroke_length.current_mean, 2);
             down_stroke_amplitude_variance += powf(pois->list[i].amplitude_difference_to_previous_poi - f->mean_down_stroke_amplitude.current_mean, 2);
+            ESP_LOGD("calculate_variance_features", "valleys i %d, nr pois %d, rate var %f  mean %f, length var %f  mean %f,  amplitude variance %f  mean %f", i, number_of_pois, valley_rate_variance, f->mean_valley_rate_over_window.current_mean, down_stroke_length_variance, f->mean_down_stroke_length.current_mean, down_stroke_amplitude_variance, f->mean_down_stroke_amplitude.current_mean);
+
         }
     }
+
+    // check the last index
+    i = pois->last_element_index;
+    if((check_even_indices && i%2!=0) || (!check_even_indices && i%2==0)){
+        number_of_pois++;
+        float rate = (float)(60.0 / ((double)pois->list[i].time_difference_to_previous_poi / (double)SECONDS_TO_MICROSECONDS));
+        ESP_LOGD("r", "elements in list %d, index %d, rate %f, timedif %u", pois->number_of_elements, i, rate, pois->list[i].time_difference_to_previous_poi);
+        valley_rate_variance += powf(rate - f->mean_valley_rate_over_window.current_mean, 2);
+        down_stroke_length_variance += powf(pois->list[i].time_difference_to_previous_poi - f->mean_down_stroke_length.current_mean, 2);
+        down_stroke_amplitude_variance += powf(pois->list[i].amplitude_difference_to_previous_poi - f->mean_down_stroke_amplitude.current_mean, 2);
+        ESP_LOGD("calculate_variance_features", "valleys i %d, nr pois %d, rate var %f  mean %f, length var %f  mean %f,  amplitude variance %f  mean %f", i, number_of_pois, valley_rate_variance, f->mean_valley_rate_over_window.current_mean, down_stroke_length_variance, f->mean_down_stroke_length.current_mean, down_stroke_amplitude_variance, f->mean_down_stroke_amplitude.current_mean);
+
+    }
+
     valley_rate_variance /= number_of_pois;
     down_stroke_length_variance /= number_of_pois;
     down_stroke_amplitude_variance /= number_of_pois;
 
+    if(number_of_pois==0){
+        valley_rate_variance = -1;
+        down_stroke_length_variance = -1;
+        down_stroke_amplitude_variance = -1;
+    }
+
     f->variance_of_valley_rate_in_window = valley_rate_variance;
     f->down_stroke_length_variance = down_stroke_length_variance;
     f->down_stroke_amplitude_variance = down_stroke_amplitude_variance;
-    ESP_LOGE("calculate_variance_features", "end");
+    ESP_LOGD("calculate_variance_features", "end");
 }
