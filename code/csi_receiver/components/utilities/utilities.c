@@ -77,6 +77,25 @@ void append_to_function_list(FunctionList *l, functype function_to_append){
     l->list[l->elements++] = function_to_append;
 }
 
+void create_list_char(ListChar *l, size_t initialSize){
+    l->list = malloc_or_die(initialSize*sizeof(char));
+    l->length = initialSize;
+    l->elements = 0;
+}
+
+void append_to_list_char(ListChar *l, char new_element){
+    if(l->elements == l->length){
+        l->length *= 1.2;
+        l->list = realloc(l->list, l->length * sizeof(char));
+    }
+    l->list[l->elements++] = new_element;
+}
+
+void free_list_char(ListChar *l){
+    free(l->list);
+    l = NULL;
+}
+
 void create_list_int(ListInt *l, size_t initialSize){
     l->list = malloc_or_die(initialSize*sizeof(int));
     l->length = initialSize;
@@ -91,6 +110,11 @@ void append_to_list_int(ListInt *l, int new_element){
     l->list[l->elements++] = new_element;
 }
 
+void free_list_int(ListInt *l){
+    free(l->list);
+    l = NULL;
+}
+
 void create_list_float(ListInt *l, size_t initialSize){
     l->list = malloc_or_die(initialSize*sizeof(float));
     l->length = initialSize;
@@ -103,6 +127,11 @@ void append_to_list_float(ListFloat *l, float new_element){
         l->list = realloc(l->list, l->length * sizeof(float));
     }
     l->list[l->elements++] = new_element;
+}
+
+void free_list_float(ListFloat *l){
+    free(l->list);
+    l = NULL;
 }
 
 void bandpass_filter_initialize(BandpassIIRFilter *f, float *b_coefficients, float *a_coefficients, int number_coefficients){
@@ -372,4 +401,127 @@ void calculate_variance_features(Features *f, POI_List *pois){
     f->down_stroke_length_variance = down_stroke_length_variance;
     f->down_stroke_amplitude_variance = down_stroke_amplitude_variance;
     ESP_LOGD("calculate_variance_features", "end");
+}
+
+void get_best_thresholds(float *stis, char *ids, int length, float *t_presence, float *t_small_movement, float *t_large_movement){
+    // keep track of the best values for each threshold
+    float max_f1_presence = -1.0;
+    float best_t_presence = -1.0;
+
+    float max_f1_small_movement = -1.0;
+    float best_t_small_movement = -1.0;
+
+    float max_f1_large_movement = -1.0;
+    float best_t_large_movement = -1.0;
+
+    for(float t=0.0; t<10.0; t+=0.05){
+        // keep track of true/false positives and negatives for all thresholds
+        int tp_presence = 0;
+        int fp_presence = 0;
+        int tn_presence = 0;
+        int fn_presence = 0;
+
+        int tp_small_movement = 0;
+        int fp_small_movement = 0;
+        int tn_small_movement = 0;
+        int fn_small_movement = 0;
+
+        int tp_large_movement = 0;
+        int fp_large_movement = 0;
+        int tn_large_movement = 0;
+        int fn_large_movement = 0;
+
+        int presence = 2;
+        int small_movement = 3;
+        int large_movement = 4;
+
+
+        for(int i=0; i<length; i++){
+            if(ids[i]==0){
+                continue;
+            }
+
+            if(stis[i]>t && ids[i]>=presence){
+                tp_presence++;
+            }
+            if(stis[i]>t && ids[i]<presence){
+                fp_presence++;
+            }
+            if(stis[i]<=t && ids[i]<presence){
+                tn_presence++;
+            }
+            if(stis[i]<=t && ids[i]>=presence){
+                fn_presence++;
+            }
+
+            if(stis[i]>t && ids[i]>=small_movement){
+                tp_small_movement++;
+            }
+            if(stis[i]>t && ids[i]<small_movement){
+                fp_small_movement++;
+            }
+            if(stis[i]<=t && ids[i]<small_movement){
+                tn_small_movement++;
+            }
+            if(stis[i]<=t && ids[i]>=small_movement){
+                fn_small_movement++;
+            }
+
+            if(stis[i]>t && ids[i]>=large_movement){
+                tp_large_movement++;
+            }
+            if(stis[i]>t && ids[i]<large_movement){
+                fp_large_movement++;
+            }
+            if(stis[i]<=t && ids[i]<large_movement){
+                tn_large_movement++;
+            }
+            if(stis[i]<=t && ids[i]>=large_movement){
+                fn_large_movement++;
+            }
+        }
+
+        // calculate f scores
+        float f_presence = (float)(2*tp_presence) / (float)(2*tp_presence + fp_presence + fn_presence);
+        float f_small_movement = (float)(2*tp_small_movement) / (float)(2*tp_small_movement + fp_small_movement + fn_small_movement);
+        float f_large_movement = (float)(2*tp_large_movement) / (float)(2*tp_large_movement + fp_large_movement + fn_large_movement);
+
+
+        // prevent nans -> 0/0
+        // check if there the activity even exists
+        if(tp_presence + fn_presence == 0){
+            f_presence = -2;
+        }
+        if(tp_small_movement + fn_small_movement == 0){
+            f_small_movement = -2;
+        }
+        if(tp_large_movement + fn_large_movement == 0){
+            f_large_movement = -2;
+        }
+
+        //ESP_LOGI("values", "tp %d, fp %d, tn %d, fn %d, f %f, current max %f, current best t %f, current t %f", tp_presence, fp_presence, tn_presence, fn_presence, f_presence, max_f1_presence, best_t_presence, t);
+
+        // check whether this is the new best score and t
+        if(f_presence >= max_f1_presence){
+            max_f1_presence = f_presence;
+            best_t_presence = t;
+        }
+
+        if(f_small_movement >= max_f1_small_movement){
+            max_f1_small_movement = f_small_movement;
+            best_t_small_movement = t;
+        }
+
+        if(f_large_movement >= max_f1_large_movement){
+            max_f1_large_movement = f_large_movement;
+            best_t_large_movement = t;
+        }
+    }
+    ESP_LOGI("get_best_thresholds", "presence t %f, f score %f", best_t_presence, max_f1_presence);
+    ESP_LOGI("get_best_thresholds", "small_movement t %f, f score %f", best_t_small_movement, max_f1_small_movement);
+    ESP_LOGI("get_best_thresholds", "large_movement t %f, f score %f", best_t_large_movement, max_f1_large_movement);
+
+    *t_presence = best_t_presence;
+    *t_small_movement = best_t_small_movement;
+    *t_large_movement = best_t_large_movement;
 }

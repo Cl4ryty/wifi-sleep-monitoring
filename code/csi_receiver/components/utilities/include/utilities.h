@@ -134,6 +134,13 @@ typedef struct
 {
     size_t length;
     size_t elements;
+    char *list;
+}ListChar;
+
+typedef struct
+{
+    size_t length;
+    size_t elements;
     float *list;
 }ListFloat;
 
@@ -156,13 +163,23 @@ void create_function_list(FunctionList *l, size_t initialSize);
 
 void append_to_function_list(FunctionList *l, functype function_to_append);
 
+void create_list_char(ListChar *l, size_t initialSize);
+
+void append_to_list_char(ListChar *l, char new_element);
+
+void free_list_char(ListChar *l);
+
 void create_list_int(ListInt *l, size_t initialSize);
 
 void append_to_list_int(ListInt *l, int new_element);
 
+void free_list_int(ListInt *l);
+
 void create_list_float(ListInt *l, size_t initialSize);
 
 void append_to_list_float(ListFloat *l, float new_element);
+
+void free_list_float(ListFloat *l);
 
 void bandpass_filter_initialize(BandpassIIRFilter *f, float *b_coefficients, float *a_coefficients, int number_coefficients);
 
@@ -189,3 +206,5 @@ void poi_list_initialize(POI_List *poi_list, int length);
 void poi_list_append(POI_List *poi_list, POI *poi);
 
 void calculate_variance_features(Features *f, POI_List *pois);
+
+void get_best_thresholds(float *stis, char *ids, int length, float *t_presence, float *t_small_movement, float *t_large_movement);

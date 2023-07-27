@@ -11,6 +11,7 @@
 #include "esp_err.h"
 #include "esp_log.h"
 #include "nvs_flash.h"
+#include "nvs.h"
 #include "esp_timer.h"
 
 #include "esp_vfs_fat.h"
@@ -31,6 +32,7 @@
 #include "float.h"
 
 #include "esp_dsp.h"
+//#include "../components/utilities/include/utilities.h"
 #include "utilities.h"
 #include "using_eigen.h"
 #include "fft.h"
@@ -56,8 +58,6 @@
 
 uint8_t customBaseMAC[] = {0x0E, 0x0E, 0x0E, 0x0E, 0x0E, 0x0D};
 char csi_sender_mac[] = {0x01, 0x0a, 0x0a, 0x0a, 0x0a, 0x0a};
-
-
 
 
 static const char *TAG = "csi receiver";  // TODO change to something more appropriate
@@ -99,8 +99,10 @@ static QueueHandle_t g_csi_info_queue = NULL;
     sdmmc_host_t host;
     sdmmc_card_t *card;
     char *file_name;
-    int16_t file_count = 0;
     FILE *file;
+
+    char *calibration_file_name;
+    FILE *calibration_file;
 
     #define WRITE_FILE_AFTER_RECEIVED_CSI_NUMBER MAX_NUMBER_OF_SAMPLES_KEPT
 #endif
@@ -169,6 +171,12 @@ static int16_t csi_current_last_element = -1;
 #define SPEED_STEP 0.05
 #define L 5
 #define SPECTRUM_LENGTH END_SPEED-START_SPEED/SPEED_STEP
+
+char activity_id = 0;
+bool running_calibration = false;
+
+ListChar id_list;
+ListFloat sti_list;
 
 
 
@@ -300,6 +308,178 @@ static void udp_client_task(void *pvParameters)
 
         if (sock != -1) 
         {
+            ESP_LOGE(TAG, "Shutting down socket and restarting...");
+            shutdown(sock, 0);
+            close(sock);
+        }
+    }
+    vTaskDelete(NULL);
+}
+
+static void udp_receive_task(void *pvParameters)
+{
+    char rx_buffer[128];
+    int addr_family = 0;
+    int ip_protocol = 0;
+    vTaskDelay(10000 / portTICK_PERIOD_MS);
+
+    while (1) {
+
+        addr_family = AF_INET;
+        ip_protocol = IPPROTO_IP;
+
+
+        int sock = socket(addr_family, SOCK_DGRAM, ip_protocol);
+        if (sock < 0) {
+            ESP_LOGE(TAG, "Unable to create socket: errno %d", errno);
+            break;
+        }
+
+        // Set timeout
+        struct timeval timeout;
+        timeout.tv_sec = 1000;
+        timeout.tv_usec = 0;
+        setsockopt (sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof timeout);
+
+        ESP_LOGI(TAG, "Socket created, receiving from to %s:%d", HOST_IP_ADDR, PORT);
+
+
+        while (1) 
+        {
+            struct sockaddr_storage source_addr; // Large enough for both IPv4 or IPv6
+            socklen_t socklen = sizeof(source_addr);
+            int len = recvfrom(sock, rx_buffer, sizeof(rx_buffer) - 1, 0, (struct sockaddr *)&source_addr, &socklen);
+
+            // Error occurred during receiving
+            if (len < 0) {
+                ESP_LOGE(TAG, "recvfrom failed: errno %d", errno);
+            }
+            // Data received
+            else {
+                rx_buffer[len] = 0; // Null-terminate whatever we received and treat like a string
+                ESP_LOGI(TAG, "Received %d bytes from %s:", len, HOST_IP_ADDR);
+                ESP_LOGI(TAG, "%s", rx_buffer);
+                if (strncmp(rx_buffer, "OK: ", 4) == 0) {
+                    ESP_LOGI(TAG, "Received expected message, reconnecting");
+                    break;
+                }
+            }
+
+            vTaskDelay((1000/BROADCAST_RATE) / portTICK_PERIOD_MS);
+        }
+
+        if (sock != -1) 
+        {
+            ESP_LOGE(TAG, "Shutting down socket and restarting...");
+            shutdown(sock, 0);
+            close(sock);
+        }
+    }
+    vTaskDelete(NULL);
+}
+
+static void udp_t_task(void *pvParameters)
+{
+    char rx_buffer[128];
+    char host_ip[] = HOST_IP_ADDR;
+    int addr_family = 0;
+    int ip_protocol = 0;
+
+    while (1) {
+
+        struct sockaddr_in dest_addr;
+        dest_addr.sin_addr.s_addr = inet_addr(HOST_IP_ADDR);
+        dest_addr.sin_family = AF_INET;
+        dest_addr.sin_port = htons(PORT);
+        addr_family = AF_INET;
+        ip_protocol = IPPROTO_IP;
+
+
+        int sock = socket(addr_family, SOCK_DGRAM, ip_protocol);
+        if (sock < 0) {
+            ESP_LOGE(TAG, "Unable to create socket: errno %d", errno);
+            break;
+        }
+
+        // Set timeout
+        struct timeval timeout;
+        timeout.tv_sec = 30;
+        timeout.tv_usec = 0;
+        int broadcast = 1;
+        setsockopt(sock, SOL_SOCKET, SO_BROADCAST, &broadcast, sizeof(broadcast));
+        if (bind(sock, (const struct sockaddr *)&dest_addr, sizeof(dest_addr)) < 0) {
+            ESP_LOGE(TAG, "Error occurred during binding: errno %d", errno);
+            break;
+        }
+
+        ESP_LOGI(TAG, "Socket created, sending to %s:%d", HOST_IP_ADDR, PORT);
+
+        while (1) {
+
+            struct sockaddr_storage source_addr; // Large enough for both IPv4 or IPv6
+            socklen_t socklen = sizeof(source_addr);
+            int len = recvfrom(sock, rx_buffer, sizeof(rx_buffer) - 1, 0, (struct sockaddr *)&source_addr, &socklen);
+
+            // Error occurred during receiving
+            if (len < 0) {
+                ESP_LOGE(TAG, "recvfrom failed: errno %d", errno);
+                break;
+            }
+            // Data received
+            else {
+                rx_buffer[len] = 0; // Null-terminate whatever we received and treat like a string
+                ESP_LOGI(TAG, "Received %d bytes from %s:", len, host_ip);
+                ESP_LOGI(TAG, "%s", rx_buffer);
+                if (strncmp(rx_buffer, "-1", 2) == 0) {
+                    ESP_LOGI(TAG, "Starting calibration");
+                    create_list_char(&id_list, 15000);
+                    create_list_float(&sti_list, 15000);
+                    activity_id = 0;
+                    running_calibration = true;                    
+                }
+
+                if (strncmp(rx_buffer, "-2", 2) == 0) {
+                    ESP_LOGI(TAG, "Stopping calibration");
+                    running_calibration = false;
+                    float t_presence = -1;
+                    float t_small_movement = -1;
+                    float t_large_movement = -1;
+                    get_best_thresholds(sti_list.list, id_list.list, sti_list.elements, &t_presence, &t_small_movement, &t_large_movement);
+                    ESP_LOGI(TAG, "got thresholds %f, %f, %f", t_presence, t_small_movement, t_large_movement);
+                    free_list_char(&id_list);
+                    free_list_float(&sti_list);
+                }
+
+                if (strncmp(rx_buffer, "0", 1) == 0) {
+                    ESP_LOGI(TAG, "Start activity: transition");
+                    activity_id = 0;
+                }
+
+                if (strncmp(rx_buffer, "1", 1) == 0) {
+                    ESP_LOGI(TAG, "Start activity: no presence");
+                    activity_id = 1;
+                }
+
+                if (strncmp(rx_buffer, "2", 1) == 0) {
+                    ESP_LOGI(TAG, "Start activity: presence");
+                    activity_id = 2;
+                }
+
+                if (strncmp(rx_buffer, "3", 1) == 0) {
+                    ESP_LOGI(TAG, "Start activity: small movement");
+                    activity_id = 3;
+                }
+
+                if (strncmp(rx_buffer, "4", 1) == 0) {
+                    ESP_LOGI(TAG, "Start activity: large movement");
+                    activity_id = 4;
+                }
+            }
+
+            vTaskDelay(10 / portTICK_PERIOD_MS);
+        }
+
+        if (sock != -1) {
             ESP_LOGE(TAG, "Shutting down socket and restarting...");
             shutdown(sock, 0);
             close(sock);
@@ -496,6 +676,7 @@ static void csi_data_print_task(void *arg)
     wifi_csi_info_t *info = NULL;
 
     char *buffer = malloc_or_die(8 * 1024);
+    char *calibration_buffer = malloc_or_die(4 * 1024);
     static uint32_t count = 0;
 
 #ifdef WRITE_TO_SD_CARD
@@ -506,13 +687,22 @@ static void csi_data_print_task(void *arg)
         
         file_name = malloc_or_die(MAX_NAME_LEN);
         sprintf(file_name, MOUNT_POINT"/csi.csv");
+
+        calibration_file_name = malloc_or_die(MAX_NAME_LEN);
+        sprintf(calibration_file_name, MOUNT_POINT"/cal.csv");
+
         struct stat st;
         int16_t i = 0;
         while (stat(file_name, &st) == 0) {
             // change the file name
+            sprintf(calibration_file_name, MOUNT_POINT"/cal_%d.csv", i);
             sprintf(file_name, MOUNT_POINT"/csi_%d.csv", i++);
         }
         file = fopen(file_name, "a");
+        ESP_LOGI(TAG, "Opening file initially cal name %s, file name %s", calibration_file_name, file_name);
+        calibration_file = fopen(calibration_file_name, "a");
+
+
     }
 
     static uint32_t write_count = 0;
@@ -1210,10 +1400,19 @@ static void csi_data_print_task(void *arg)
         //     free(buffer1);
         // }
 
+        if(running_calibration){
+            append_to_list_char(&id_list, activity_id);
+            append_to_list_float(&sti_list, sti);
+        }
+
 
 #if defined(PRINT_CSI_TO_SERIAL) || defined(WRITE_TO_SD_CARD)
         size_t len = 0;
+        size_t calibration_len = 0;
+
         if (!count) {
+            calibration_len += sprintf(calibration_buffer + calibration_len, "type,count,esp_timestamp,packet_timestamp,sti,class_id\n");
+
             ESP_LOGI(TAG, "================ CSI RECV ================");
             len += sprintf(buffer + len, "type");
             if(SENSE_PRINT_STI){
@@ -1252,6 +1451,11 @@ static void csi_data_print_task(void *arg)
                 len += sprintf(buffer + len, ",breath_poi_found,new_breath_poi");
             }
             len += sprintf(buffer + len, ",sequence,timestamp,source_mac,first_word_invalid,len,rssi,rate,sig_mode,mcs,bandwidth,smoothing,not_sounding,aggregation,stbc,fec_coding,sgi,noise_floor,ampdu_cnt,channel,secondary_channel,local_timestamp,ant,sig_len,rx_state,data\n");
+        }
+
+        if(running_calibration){
+            calibration_len += sprintf(calibration_buffer + calibration_len, "CALIBRATION,%d,%u,%u,%f,%d\n",
+                    count, esp_log_timestamp(), rx_ctrl->timestamp, sti, activity_id);
         }
         
         len += sprintf(buffer + len, "CSI_DATA");
@@ -1323,10 +1527,17 @@ static void csi_data_print_task(void *arg)
 
 #ifdef PRINT_CSI_TO_SERIAL
         printf("%s", buffer);
+        if(running_calibration || count==1){
+            printf("%s", calibration_buffer);
+        }
+
 #endif
         
 #ifdef WRITE_TO_SD_CARD
         fprintf(file, "%s", buffer);
+        if(running_calibration || count==1){
+            fprintf(calibration_file, "%s", calibration_buffer);
+        }
 
         write_count++;
         if (write_count > WRITE_FILE_AFTER_RECEIVED_CSI_NUMBER)
@@ -1335,9 +1546,12 @@ static void csi_data_print_task(void *arg)
             ESP_LOGI(TAG, "================ Closing file ================");
             fflush(file);
             fclose(file);
+            fflush(calibration_file);
+            fclose(calibration_file);
             ESP_LOGI(TAG, "================  file closed ================");
             ESP_LOGI(TAG, "Opening file");
             file = fopen(file_name, "a");
+            calibration_file = fopen(calibration_file_name, "a");
         }
 #endif
         
@@ -1520,4 +1734,6 @@ void app_main(void)
     g_csi_info_queue = xQueueCreate(256, sizeof(void *));
     xTaskCreate(csi_data_print_task, "csi_data_print", 8 * 1024, NULL, 0, NULL);
     //xTaskCreate(udp_client_task, "udp_client_task", 4 * 1024, NULL, 0, NULL);
+    xTaskCreate(udp_t_task, "udp_t_task", 4 * 1024, NULL, 0, NULL);
+    
 }

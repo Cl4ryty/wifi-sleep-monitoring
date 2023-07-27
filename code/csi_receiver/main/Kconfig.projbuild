@@ -70,7 +70,6 @@ menu "Example Configuration"
         default true
         help
             Whether to print the STI value (proxy of presence/motion) to whichever method is selected for transmitting/storing data.
-
     
     config SENSE_PRINT_BREATHING_POI
         bool "print breathing poi"
