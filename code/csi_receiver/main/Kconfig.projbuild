@@ -53,13 +53,25 @@ menu "Example Configuration"
                 bool "print CSI"
                 default true
                 help
-                    Whether to print the receives CSI.
+                    Whether to print the receives CSI to a file on the SD card (and other outputs if different logging is not enabled).
 
             config SENSE_PRINT_STI_SD
                 bool "print sti value"
                 default true
                 help
                     Whether to print the STI value (proxy of presence/motion) to a file on the SD card (and other outputs if different logging is not enabled).
+
+            config SENSE_PRINT_DETECTION_SD
+                bool "print presence / movement detection results"
+                default true
+                help
+                    Whether to print the presence / movement detection results (based on the sti being larger than the specific threshold) to a file on the SD card (and other outputs if different logging is not enabled).
+            
+            config SENSE_PRINT_THRESHOLDS_SD
+                bool "print presence / movement thresholds"
+                default true
+                help
+                    Whether to print the presence / movement detection thresholds and their F scores on the calibration data to a file on the SD card (and other outputs if different logging is not enabled).
                     
             config SENSE_PRINT_FUSED_HEART_SD
                 bool "print fused heart amplitude value"
@@ -117,14 +129,26 @@ menu "Example Configuration"
                 bool "print CSI"
                 default true
                 help
-                    Whether to print the receives CSI.
+                    Whether to print the receives CSI to serial.
 
             config SENSE_PRINT_STI_S
                 bool "print sti value"
                 default true
                 help
                     Whether to print the STI value (proxy of presence/motion) to serial.
-                    
+            
+            config SENSE_PRINT_DETECTION_S
+                bool "print presence / movement detection results"
+                default true
+                help
+                    Whether to print the presence / movement detection results (based on the sti being larger than the specific threshold) to serial.
+            
+            config SENSE_PRINT_THRESHOLDS_S
+                bool "print presence / movement thresholds"
+                default true
+                help
+                    Whether to print the presence / movement detection thresholds and their F scores on the calibration data to serial.
+                                
             config SENSE_PRINT_FUSED_HEART_S
                 bool "print fused heart amplitude value"
                 default true

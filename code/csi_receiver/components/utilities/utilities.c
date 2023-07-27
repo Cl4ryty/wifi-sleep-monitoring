@@ -403,7 +403,7 @@ void calculate_variance_features(Features *f, POI_List *pois){
     ESP_LOGD("calculate_variance_features", "end");
 }
 
-void get_best_thresholds(float *stis, char *ids, int length, float *t_presence, float *t_small_movement, float *t_large_movement){
+void get_best_thresholds(float *stis, char *ids, int length, float *t_presence, float *t_small_movement, float *t_large_movement, float *f_presence, float *f_small_movement, float *f_large_movement){
     // keep track of the best values for each threshold
     float max_f1_presence = -1.0;
     float best_t_presence = -1.0;
@@ -524,4 +524,8 @@ void get_best_thresholds(float *stis, char *ids, int length, float *t_presence, 
     *t_presence = best_t_presence;
     *t_small_movement = best_t_small_movement;
     *t_large_movement = best_t_large_movement;
+
+    *f_presence = max_f1_presence;
+    *f_small_movement = max_f1_small_movement;
+    *f_large_movement = max_f1_large_movement;
 }

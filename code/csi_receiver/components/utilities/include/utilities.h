@@ -207,4 +207,4 @@ void poi_list_append(POI_List *poi_list, POI *poi);
 
 void calculate_variance_features(Features *f, POI_List *pois);
 
-void get_best_thresholds(float *stis, char *ids, int length, float *t_presence, float *t_small_movement, float *t_large_movement);
+void get_best_thresholds(float *stis, char *ids, int length, float *t_presence, float *t_small_movement, float *t_large_movement, float *f_presence, float *f_small_movement, float *f_large_movement);

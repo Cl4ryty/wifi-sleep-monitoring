@@ -171,6 +171,15 @@ ListFloat sti_list;
 float t_presence = -1;
 float t_small_movement = -1;
 float t_large_movement = -1;
+
+float f_presence = -1;
+float f_small_movement = -1;
+float f_large_movement = -1;
+
+bool presence_detected = false;
+bool small_movement_detected = false;
+bool large_movement_detected = false;
+
 nvs_handle_t my_handle;
 
 
@@ -376,7 +385,10 @@ static void udp_t_task(void *pvParameters)
                     t_presence = -1;
                     t_small_movement = -1;
                     t_large_movement = -1;
-                    get_best_thresholds(sti_list.list, id_list.list, sti_list.elements, &t_presence, &t_small_movement, &t_large_movement);
+                    f_presence = -1;
+                    f_small_movement = -1;
+                    f_large_movement = -1;
+                    get_best_thresholds(sti_list.list, id_list.list, sti_list.elements, &t_presence, &t_small_movement, &t_large_movement, &f_presence, &f_small_movement, &f_large_movement);
                     ESP_LOGI(TAG, "got thresholds %f, %f, %f", t_presence, t_small_movement, t_large_movement);
                     free_list_char(&id_list);
                     free_list_float(&sti_list);
@@ -717,6 +729,25 @@ static void csi_data_print_task(void *arg)
             }
             sti = sqrt(sum);
             // TODO: store the STI value, check if it is larger than a certain threshold and output the result of the presence detection
+        }
+
+        // compare sti value to thresholds to detect presence / movement
+        if(sti > t_presence){
+            presence_detected = true;
+        }else{
+            presence_detected = false;
+        }
+
+        if(sti > t_small_movement){
+            small_movement_detected = true;
+        }else{
+            small_movement_detected = false;
+        }
+
+        if(sti > t_large_movement){
+            large_movement_detected = true;
+        }else{
+            large_movement_detected = false;
         }
         
 
@@ -1411,6 +1442,14 @@ static void csi_data_print_task(void *arg)
 #ifdef CONFIG_SENSE_PRINT_BREATHING_POI_SD
             len += sprintf(buffer + len, ",breath_poi_found,new_breath_poi");
 #endif
+
+#ifdef CONFIG_SENSE_PRINT_DETECTION_SD
+            len += sprintf(buffer + len, ",detected_presence,detected_small_movement,detected_large_movement");
+#endif
+
+#ifdef CONFIG_SENSE_PRINT_THRESHOLDS_SD
+            len += sprintf(buffer + len, ",threshold_presence,f_presence,threshold_small_movement,f_small_movement,threshold_large_movement,f_large_movement");
+#endif
             
             len += sprintf(buffer + len, ",sequence,timestamp,source_mac,first_word_invalid,len,rssi,rate,sig_mode,mcs,bandwidth,smoothing,not_sounding,aggregation,stbc,fec_coding,sgi,noise_floor,ampdu_cnt,channel,secondary_channel,local_timestamp,ant,sig_len,rx_state");
 #ifdef CONFIG_SENSE_PRINT_CSI_SD   
@@ -1469,6 +1508,14 @@ static void csi_data_print_task(void *arg)
             }else{
                 len += sprintf(buffer + len, ",[]");
             }
+#endif
+
+#ifdef CONFIG_SENSE_PRINT_DETECTION_SD
+            len += sprintf(buffer + len, ",%d,%d,%d", presence_detected, small_movement_detected, large_movement_detected);
+#endif
+
+#ifdef CONFIG_SENSE_PRINT_THRESHOLDS_SD
+            len += sprintf(buffer + len, ",%f,%f,%f,%f,%f,%f", t_presence, f_presence, t_small_movement, f_small_movement, t_large_movement, f_large_movement);
 #endif
 
 
@@ -1569,6 +1616,14 @@ static void csi_data_print_task(void *arg)
             len += sprintf(buffer + len, ",breath_poi_found,new_breath_poi");
 #endif
 
+#ifdef CONFIG_SENSE_PRINT_DETECTION_SD
+            len += sprintf(buffer + len, ",detected_presence,detected_small_movement,detected_large_movement");
+#endif
+
+#ifdef CONFIG_SENSE_PRINT_THRESHOLDS_SD
+            len += sprintf(buffer + len, ",threshold_presence,f_presence,threshold_small_movement,f_small_movement,threshold_large_movement,f_large_movement");
+#endif
+
             len += sprintf(buffer + len, ",sequence,timestamp,source_mac,first_word_invalid,len,rssi,rate,sig_mode,mcs,bandwidth,smoothing,not_sounding,aggregation,stbc,fec_coding,sgi,noise_floor,ampdu_cnt,channel,secondary_channel,local_timestamp,ant,sig_len,rx_state");
 
 #ifdef CONFIG_SENSE_PRINT_CSI_SD   
@@ -1629,6 +1684,13 @@ static void csi_data_print_task(void *arg)
             }
 #endif
 
+#ifdef CONFIG_SENSE_PRINT_DETECTION_SD
+            len += sprintf(buffer + len, ",%d,%d,%d", presence_detected, small_movement_detected, large_movement_detected);
+#endif
+
+#ifdef CONFIG_SENSE_PRINT_THRESHOLDS_SD
+            len += sprintf(buffer + len, ",%f,%f,%f,%f,%f,%f", t_presence, f_presence, t_small_movement, f_small_movement, t_large_movement, f_large_movement);
+#endif
 
         len += sprintf(buffer + len, ",%d,%u," MACSTR ",%d,%d,%d,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%d,%u,%u,%u,%u,%u,%u,%u",
                     count, esp_log_timestamp(),
@@ -1714,6 +1776,15 @@ static void csi_data_print_task(void *arg)
 #ifdef CONFIG_SENSE_PRINT_BREATHING_POI_S
             len1 += sprintf(buffer + len1, ",breath_poi_found,new_breath_poi");
 #endif
+
+#ifdef CONFIG_SENSE_PRINT_DETECTION_S
+            len += sprintf(buffer + len, ",detected_presence,detected_small_movement,detected_large_movement");
+#endif
+
+#ifdef CONFIG_SENSE_PRINT_THRESHOLDS_S
+            len += sprintf(buffer + len, ",threshold_presence,f_presence,threshold_small_movement,f_small_movement,threshold_large_movement,f_large_movement");
+#endif
+
             len1 += sprintf(buffer + len1, ",sequence,timestamp,source_mac,first_word_invalid,len,rssi,rate,sig_mode,mcs,bandwidth,smoothing,not_sounding,aggregation,stbc,fec_coding,sgi,noise_floor,ampdu_cnt,channel,secondary_channel,local_timestamp,ant,sig_len,rx_state");
 #ifdef CONFIG_SENSE_PRINT_CSI_S   
             len1 += sprintf(buffer + len1, ",data");
@@ -1774,6 +1845,13 @@ static void csi_data_print_task(void *arg)
             }
 #endif
 
+#ifdef CONFIG_SENSE_PRINT_DETECTION_S
+            len += sprintf(buffer + len, ",%d,%d,%d", presence_detected, small_movement_detected, large_movement_detected);
+#endif
+
+#ifdef CONFIG_SENSE_PRINT_THRESHOLDS_S
+            len += sprintf(buffer + len, ",%f,%f,%f,%f,%f,%f", t_presence, f_presence, t_small_movement, f_small_movement, t_large_movement, f_large_movement);
+#endif
 
         len1 += sprintf(buffer + len1, ",%d,%u," MACSTR ",%d,%d,%d,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%d,%u,%u,%u,%u,%u,%u,%u",
                     count, esp_log_timestamp(),
