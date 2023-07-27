@@ -1,37 +1,13 @@
-#include <stdio.h>
-#include <string.h>
-#include <sys/unistd.h>
-#include <sys/stat.h>
-
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_mac.h"
 #include "esp_wifi.h"
-#include "esp_event.h"
 #include "esp_err.h"
 #include "esp_log.h"
 #include "nvs_flash.h"
-#include "nvs.h"
-#include "esp_timer.h"
-
-#include "esp_vfs_fat.h"
-#include "driver/sdspi_host.h"
-#include "driver/spi_common.h"
-#include "sdmmc_cmd.h"
-#include "sdkconfig.h"
-
-#include "lwip/err.h"
-#include "lwip/sys.h"
-
-#include "rom/ets_sys.h"
 
 #include "lwip/sockets.h"
-#include <lwip/netdb.h>
 
-#include "math.h"
-#include "float.h"
-
-#include "esp_dsp.h"
 #include "utilities.h"
 #include "using_eigen.h"
 #include "fft.h"
@@ -114,13 +90,8 @@ float fft_frequencies[] = {0.0, 0.048828125, 0.09765625, 0.146484375, 0.1953125,
 int fft_every_x_seconds = 10;
 unsigned next_fft_timestamp = 30 * SECONDS_TO_MICROSECONDS; // start after 30 seconds to give the ESPs some time to start sending/receiving
 
-// #define SPEED_SPECTRUM_WINDOW_IN_SECONDS 1
-// #define SPEED_SPECTRUM_M_SAMPLES SPEED_SPECTRUM_WINDOW_IN_SECONDS * CSI_RATE
-// float speed_spectrum_every_x_seconds = 0.1;
-// unsigned next_speed_spectrum_timestamp = 5 * SECONDS_TO_MICROSECONDS; // start after 30 seconds to give the ESPs some time to start sending/receiving
 
 float (*amplitude_array)[MAX_NUMBER_OF_SAMPLES_KEPT][NUMBER_SUBCARRIERS];
-// float amplitude_array[MAX_NUMBER_OF_SAMPLES_KEPT];
 unsigned timestamp_array[MAX_NUMBER_OF_SAMPLES_KEPT];
 static int16_t current_first_element = -1;
 static int16_t current_last_element = -1;
@@ -151,17 +122,6 @@ float MRC_ratios_heart[NUMBER_SUBCARRIERS];
 float MRC_scalar_breath = 1;
 float MRC_scalar_heart = 1;
 
-// int8_t (*CSI_samples)[SPEED_SPECTRUM_M_SAMPLES][NUMBER_SUBCARRIERS*2];
-// static int16_t csi_current_first_element = -1;
-// static int16_t csi_current_last_element = -1;
-
-// #define CHANNEL_FREQUENCY 2412000000
-// #define START_SPEED 0.0
-// #define END_SPEED 1.0
-// #define SPEED_STEP 0.05
-// #define L 5
-// #define SPECTRUM_LENGTH END_SPEED-START_SPEED/SPEED_STEP
-
 char activity_id = 0;
 bool running_calibration = false;
 
@@ -182,21 +142,6 @@ bool large_movement_detected = false;
 
 nvs_handle_t my_handle;
 
-
-float calculate_variance(float *samples, int samples_length, float mean){ // calculates over the whole sample array
-    float result = 0;
-    for(int i=0; i<samples_length; i++){
-        result += (samples[i] - mean);
-    }
-    result = result / samples_length;
-    return result;
-}
-
-// TODO
-void bandpass_filter_free(BandpassIIRFilter *f){
-    free(f->last_inputs);
-    free(f->last_outputs);
-}
 
 size_t print_sti_to_buffer(char *buffer, size_t len){
     // sti values        
@@ -319,7 +264,7 @@ static void udp_client_task(void *pvParameters)
     vTaskDelete(NULL);
 }
 
-static void udp_t_task(void *pvParameters)
+static void udp_calibration_task(void *pvParameters)
 {
     char rx_buffer[128];
     char host_ip[] = HOST_IP_ADDR;
@@ -334,7 +279,6 @@ static void udp_t_task(void *pvParameters)
         dest_addr.sin_port = htons(PORT);
         addr_family = AF_INET;
         ip_protocol = IPPROTO_IP;
-
 
         int sock = socket(addr_family, SOCK_DGRAM, ip_protocol);
         if (sock < 0) {
@@ -352,8 +296,6 @@ static void udp_t_task(void *pvParameters)
             ESP_LOGE(TAG, "Error occurred during binding: errno %d", errno);
             break;
         }
-
-        ESP_LOGI(TAG, "Socket created, sending to %s:%d", HOST_IP_ADDR, PORT);
 
         while (1) {
 
@@ -483,24 +425,11 @@ void analysis_init(void){
     bandpass_filter_initialize(&heart_filter, heart_bandpass_coefficients[0], heart_bandpass_coefficients[1], NUMBER_COEFFICIENTS);
 }
 
-void print_x(float *x, int x_length){
-    char *buffer1 = malloc_or_die(8 * 1024* 4);
-    size_t len1 = 0;
-    len1 += sprintf(buffer1 + len1, "\"[%f", x[0]);
-    for (int i = 1; i < x_length; i++) 
-    {
-        len1 += sprintf(buffer1 + len1, ",%f", x[i]);
-    }
-    len1 += sprintf(buffer1 + len1, "]\"\n");
-    
-    printf("%s", buffer1);
-    free(buffer1);
-}
 
 float mrc_pca(float *MRC_ratios, float data[][NUMBER_SUBCARRIERS], int data_length, int data_current_last_index, int use_last_n_elements, float lower_frequency_bound, float upper_frequency_bound, float *bandpass_coefficients_b, float *bandpass_coefficients_a){
     // calculate psd
 
-    // Create the FFT config structure
+    // create the FFT config structure
     fft_config_t *real_fft_plan = fft_init(use_last_n_elements, FFT_REAL, FFT_FORWARD, NULL, NULL);
 
     // create array passed to the PCA
@@ -577,7 +506,6 @@ float mrc_pca(float *MRC_ratios, float data[][NUMBER_SUBCARRIERS], int data_leng
         MRC_ratios[subcarrier] *= pc_positive;
         
         // ESP_LOGI(TAG, "end of subcarrier for, value %f, signal %f, noise %f", MRC_ratios[subcarrier], signal_energy, noise_energy);
-        
     }
     ESP_LOGI(TAG, "completed mrc-pca, MRC scalar %f", MRC_scalar);
     fft_destroy(real_fft_plan);
@@ -657,7 +585,6 @@ static void csi_data_print_task(void *arg)
     {
         ESP_LOGI(TAG, "Opening file initially");
         // Check if destination file exists before renaming
-        
         file_name = malloc_or_die(MAX_NAME_LEN);
         sprintf(file_name, MOUNT_POINT"/csi.csv");
 
@@ -674,18 +601,12 @@ static void csi_data_print_task(void *arg)
         file = fopen(file_name, "a");
         ESP_LOGI(TAG, "Opening file initially cal name %s, file name %s", calibration_file_name, file_name);
         calibration_file = fopen(calibration_file_name, "a");
-
-
     }
-
     static uint32_t write_count = 0;
 #endif
 
     while (xQueueReceive(g_csi_info_queue, &info, portMAX_DELAY)) {
-        
         wifi_pkt_rx_ctrl_t *rx_ctrl = &info->rx_ctrl;
-
-        // ESP_LOGI(TAG, "================ CSI RECV ================, count: %d, time received %lu, current time %llu", count, rx_ctrl->timestamp, esp_timer_get_time());
 
         float amplitude[NUMBER_SUBCARRIERS];
         // float phase[NUMBER_SUBCARRIERS];
@@ -728,7 +649,6 @@ static void csi_data_print_task(void *arg)
                 sum = sum + pow((previous_amplitude_hat[i] - amplitude_hat[i]), 2);
             }
             sti = sqrt(sum);
-            // TODO: store the STI value, check if it is larger than a certain threshold and output the result of the presence detection
         }
 
         // compare sti value to thresholds to detect presence / movement
@@ -737,20 +657,17 @@ static void csi_data_print_task(void *arg)
         }else{
             presence_detected = false;
         }
-
         if(sti > t_small_movement){
             small_movement_detected = true;
         }else{
             small_movement_detected = false;
         }
-
         if(sti > t_large_movement){
             large_movement_detected = true;
         }else{
             large_movement_detected = false;
         }
         
-
         // append amplitude to corresponding queue / array
         if(current_last_element+1 < MAX_NUMBER_OF_SAMPLES_KEPT)
         {
@@ -770,31 +687,11 @@ static void csi_data_print_task(void *arg)
             MAC_struct_check_if_indices_become_invalid(&MAC_breath, current_last_element);
         }
 
-        // // append the new csi sample to the array
-        // csi_current_last_element = get_next_index(csi_current_last_element, SPEED_SPECTRUM_M_SAMPLES);
-        // if(csi_current_first_element == csi_current_last_element){
-        //     csi_current_first_element = get_next_index(csi_current_first_element, SPEED_SPECTRUM_M_SAMPLES);
-        // }
-        // if(csi_current_first_element == -1){
-        //     csi_current_first_element = 0;
-        // }
-        // memcpy((*CSI_samples)[csi_current_last_element], info->buf, NUMBER_SUBCARRIERS*2);
-        
-
-        // ESP_LOGI(TAG, "sti %f", sti);
         sti_array[current_last_element] = sti;
         memcpy((*amplitude_array)[current_last_element], amplitude, sizeof(amplitude));
         timestamp_array[current_last_element] = rx_ctrl->timestamp;
 
-        // calculate the speed spectrum every x seconds
-        // if(timestamp_array[current_last_element]>next_speed_spectrum_timestamp){
-        //     ESP_LOGW(TAG, "calculating speed spectrum");
-        //     float *speed_spectrum_out = malloc(sizeof(float) * (int)SPECTRUM_LENGTH);
-        //     doppler_music_speed_variance(CSI_samples, csi_current_first_element, csi_current_last_element, SPEED_SPECTRUM_M_SAMPLES, NUMBER_SUBCARRIERS, L, START_SPEED, END_SPEED, SPEED_STEP, CHANNEL_FREQUENCY, 1.0/CSI_RATE, speed_spectrum_out);
-        //     next_speed_spectrum_timestamp += speed_spectrum_every_x_seconds * SECONDS_TO_MICROSECONDS;
-        // }
 
-        
         // calculate fused amplitude
         float fused_amplitude_breath = 0;
         float fused_amplitude_heart = 0;
@@ -813,7 +710,6 @@ static void csi_data_print_task(void *arg)
 
         // MAC calculations
         // get T by using FFT on the filtered waveform
-
         float T_breath = 3; // period in seconds 3 corresponds to 20 bpm
         float T_heart = 1; // period in seconds 1 corresponds to 60 bpm
 
@@ -1356,47 +1252,11 @@ static void csi_data_print_task(void *arg)
             ESP_LOGD(TAG, "heart data,%d,%f,%f,%d,%d,%d,%d,%d,%d\n", timestamp_array[current_last_element], filtered_heart[current_last_element], MAC_heart.MAC.current_mean, heart_found_up_intercept, heart_found_down_intercept, found_valley, valley_index_difference_from_last_intercept, found_peak, peak_index_difference_from_last_intercept);
             
         }
-        
-
-        // printf("Bandpass_test,%f,%f\n", amplitude[42], breathing_filter.out);
-
-        // print the filtered breath
-        // if(current_last_element == MAX_NUMBER_OF_SAMPLES_KEPT-1){
-        //     ESP_LOGI(TAG, "enough samples for testing fft");
-        //     float rate = fft_rate_estimation(&filtered_breath, MAX_NUMBER_OF_SAMPLES_KEPT, current_last_element, fft_count);
-            
-        //     printf("estimated rate %f, current_first_element %d, current last element %d \n", rate, current_first_element, current_last_element);
-        //     char *buffer1 = malloc_or_die(8 * 1024* 4);
-        //     size_t len1 = 0;
-        //     if(current_last_element >= current_first_element)
-        //     {
-        //         len1 += sprintf(buffer1 + len1, "\"[%f", filtered_breath[current_first_element]);
-        //         for (int i = current_first_element+1; i <= current_last_element; i++) 
-        //         {
-        //             len1 += sprintf(buffer1 + len1, ",%f", filtered_breath[i]);
-        //         }
-        //         len1 += sprintf(buffer1 + len1, "]\"\n");
-        //     }
-        //     else
-        //     {
-        //         len1 += sprintf(buffer1 + len1, "\"[%f", filtered_breath[current_first_element]);
-        //         for (int i = current_first_element+1; i < MAX_NUMBER_OF_SAMPLES_KEPT; i++) {
-        //             len1 += sprintf(buffer1 + len1, ",%f", filtered_breath[i]);
-        //         }
-        //         for (int i = 0+1; i <= current_last_element; i++) {
-        //             len1 += sprintf(buffer1 + len1, ",%f", filtered_breath[i]);
-        //         }
-        //         len1 += sprintf(buffer1 + len1, "]\"\n");
-        //     }
-        //     printf("%s", buffer1);
-        //     free(buffer1);
-        // }
 
         if(running_calibration){
             append_to_list_char(&id_list, activity_id);
             append_to_list_float(&sti_list, sti);
         }
-
 
 #if !defined(CONFIG_SENSE_LOG_DIFFERENT_THINGS_TO_DIFFERENT_OUTPUTS) && (defined(CONFIG_SENSE_LOG_TO_SERIAL) || defined(CONFIG_SENSE_LOG_TO_SD))
         size_t len = 0;
@@ -1518,7 +1378,6 @@ static void csi_data_print_task(void *arg)
             len += sprintf(buffer + len, ",%f,%f,%f,%f,%f,%f", t_presence, f_presence, t_small_movement, f_small_movement, t_large_movement, f_large_movement);
 #endif
 
-
         len += sprintf(buffer + len, ",%d,%u," MACSTR ",%d,%d,%d,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%d,%u,%u,%u,%u,%u,%u,%u",
                     count, esp_log_timestamp(),
                     MAC2STR(info->mac), info->first_word_invalid, info->len, rx_ctrl->rssi, rx_ctrl->rate, rx_ctrl->sig_mode,
@@ -1545,7 +1404,6 @@ static void csi_data_print_task(void *arg)
         if(running_calibration || count==1){
             printf("%s", calibration_buffer);
         }
-
 #endif
         
 #if defined(CONFIG_SENSE_LOG_TO_SD) && !defined(CONFIG_SENSE_LOG_DIFFERENT_THINGS_TO_DIFFERENT_OUTPUTS)
@@ -1876,7 +1734,6 @@ static void csi_data_print_task(void *arg)
         if(running_calibration || count==1){
             printf("%s", calibration_buffer);
         }
-
 #endif
         
         count++;
@@ -1895,7 +1752,6 @@ static void csi_data_print_task(void *arg)
 #endif
     vTaskDelete(NULL);
 }
-
 
 
 static void csi_callback(void *ctx, wifi_csi_info_t *info)
@@ -1925,8 +1781,6 @@ void wifi_init_softap(void)
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
     esp_netif_create_default_wifi_ap();
-
-    
 
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
@@ -1965,12 +1819,9 @@ void wifi_init_softap(void)
     //ESP_ERROR_CHECK(esp_wifi_set_promiscuous(true));
     ESP_ERROR_CHECK(esp_wifi_set_csi_rx_cb(csi_callback, NULL));
 
-
     // enable CSI collection
     esp_err_t ret = esp_wifi_set_csi(true);
     ESP_LOGI(TAG, "csi returned %d", ret);
-
-
 }
 
 #ifdef CONFIG_SENSE_LOG_TO_SD
@@ -2009,7 +1860,6 @@ void wifi_init_softap(void)
     slot_config.host_id = host.slot;
 
     ret = esp_vfs_fat_sdspi_mount(mount_point, &host, &slot_config, &mount_config, &card);
-
 
     if (ret != ESP_OK) {
         if (ret == ESP_FAIL) {
@@ -2111,7 +1961,6 @@ void app_main(void)
     esp_wifi_set_bandwidth(WIFI_IF_AP, WIFI_BW_HT40);
 
     float_arr_alloc(MAX_NUMBER_OF_SAMPLES_KEPT, NUMBER_SUBCARRIERS, &amplitude_array);
-    // int8_arr_alloc(SPEED_SPECTRUM_M_SAMPLES, NUMBER_SUBCARRIERS*2, &CSI_samples);
 
     // setup_broadcast_messages();
     analysis_init();
@@ -2119,6 +1968,5 @@ void app_main(void)
     g_csi_info_queue = xQueueCreate(256, sizeof(void *));
     xTaskCreate(csi_data_print_task, "csi_data_print", 8 * 1024, NULL, 0, NULL);
     //xTaskCreate(udp_client_task, "udp_client_task", 4 * 1024, NULL, 0, NULL);
-    xTaskCreate(udp_t_task, "udp_t_task", 4 * 1024, NULL, 0, NULL);
-    
+    xTaskCreate(udp_calibration_task, "udp_calibration_task", 4 * 1024, NULL, 0, NULL);
 }

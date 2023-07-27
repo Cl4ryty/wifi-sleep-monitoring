@@ -155,6 +155,8 @@ int get_previous_index(int current_index, int array_length);
 
 int get_next_index(int current_index, int array_length);
 
+void print_x(float *x, int x_length);
+
 void circular_list_initialize(CircularIntList *l, int length);
 
 void circular_list_append(CircularIntList *l, int input);

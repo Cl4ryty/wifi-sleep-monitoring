@@ -43,6 +43,20 @@ int get_next_index(int current_index, int array_length){
     return next_index;
 }
 
+void print_x(float *x, int x_length){
+    char *buffer1 = malloc_or_die(8 * 1024* 4);
+    size_t len1 = 0;
+    len1 += sprintf(buffer1 + len1, "\"[%f", x[0]);
+    for (int i = 1; i < x_length; i++) 
+    {
+        len1 += sprintf(buffer1 + len1, ",%f", x[i]);
+    }
+    len1 += sprintf(buffer1 + len1, "]\"\n");
+    
+    printf("%s", buffer1);
+    free(buffer1);
+}
+
 void circular_list_initialize(CircularIntList *l, int length){
     l->list = malloc_or_die(sizeof(int) * length);
     l->length = length;
