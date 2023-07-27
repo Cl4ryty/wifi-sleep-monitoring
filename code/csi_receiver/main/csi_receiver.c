@@ -6,6 +6,9 @@
 #include "esp_log.h"
 #include "nvs_flash.h"
 
+#include "esp_vfs_fat.h"
+#include "sdmmc_cmd.h"
+
 #include "lwip/sockets.h"
 
 #include "utilities.h"
