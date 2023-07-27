@@ -1,81 +1,180 @@
 menu "Example Configuration"
 
-    config ESP_WIFI_SSID
-        string "WiFi SSID"
-        default "myssid"
-        help
-            SSID (network name) for the example to connect to.
+    menu "Wi-Fi settings"
+        config ESP_WIFI_SSID
+            string "WiFi SSID"
+            default "myssid"
+            help
+                SSID (network name) for the example to connect to.
 
-    config ESP_WIFI_PASSWORD
-        string "WiFi Password"
-        default "mypassword"
-        help
-            WiFi password (WPA or WPA2) for the example to use.
-    config ESP_WIFI_CHANNEL
-        int "WiFi Channel"
-        range 1 13
-        default 1
-        help
-            WiFi channel (network channel) for the example to use.
+        config ESP_WIFI_PASSWORD
+            string "WiFi Password"
+            default "mypassword"
+            help
+                WiFi password (WPA or WPA2) for the example to use.
+        config ESP_WIFI_CHANNEL
+            int "WiFi Channel"
+            range 1 13
+            default 1
+            help
+                WiFi channel (network channel) for the example to use.
 
-    config ESP_MAX_STA_CONN
-        int "Maximal STA connections"
-        default 4
-        help
-            Max number of the STA connects to AP.
-            
-    config SENSE_PRINT_STI
-        bool "print sti value"
-        default true
-        help
-            Whether to print the STI value (proxy of presence/motion) to whichever method is selected for transmitting/storing data.
-             
-    config SENSE_PRINT_FUSED_HEART
-        bool "print fused heart amplitude value"
-        default true
-        help
-            Whether to print the STI value (proxy of presence/motion) to whichever method is selected for transmitting/storing data.           
-    config SENSE_PRINT_FUSED_BREATH
-        bool "print fused breath amplitude value"
-        default true
-        help
-            Whether to print the STI value (proxy of presence/motion) to whichever method is selected for transmitting/storing data.
-           
-    config SENSE_PRINT_FILTERED_HEART
-        bool "print filtered heart value"
-        default true
-        help
-            Whether to print the STI value (proxy of presence/motion) to whichever method is selected for transmitting/storing data.
+        config ESP_MAX_STA_CONN
+            int "Maximal STA connections"
+            default 4
+            help
+                Max number of the STA connects to AP.
+    endmenu
 
-    config SENSE_PRINT_FILTERED_BREATH
-        bool "print filtered breath value"
-        default true
-        help
-            Whether to print the STI value (proxy of presence/motion) to whichever method is selected for transmitting/storing data.
+    menu "Logging Settings" 
 
-    config SENSE_PRINT_HEART_FEATURES
-        bool "print heart features"
-        default true
-        help
-            Whether to print the STI value (proxy of presence/motion) to whichever method is selected for transmitting/storing data.
+        config SENSE_LOG_TO_SD
+            bool "Log to SD card"
+            default false
+            help
+                Enable logging to SD card. Which features are logged can be selected using the suboptions.
 
-    config SENSE_PRINT_BREATHING_FEATURES
-        bool "print breathing features"
-        default true
-        help
-            Whether to print the STI value (proxy of presence/motion) to whichever method is selected for transmitting/storing data.
+        config SENSE_LOG_TO_SERIAL
+            bool "Log to serial"
+            default false
+            help
+                Enable logging to serial. Which features are logged can be selected using the suboptions.
 
-     config SENSE_PRINT_HEART_POI
-        bool "print heart poi"
-        default true
-        help
-            Whether to print the STI value (proxy of presence/motion) to whichever method is selected for transmitting/storing data.
+        config SENSE_LOG_DIFFERENT_THINGS_TO_DIFFERENT_OUTPUTS
+            bool "Log different things to different outputs"
+            default false
+            help
+                Enable logging different features to different outputs. Which features are logged to which output can be selected using the suboptions. Enabling this option but logging many of the same things to each output slows down processing, so it might make sense to just log everything you want to all outputs.
+
+        menu "Features to log to sd or all enabled outputs"
+            visible if SENSE_LOG_TO_SD || (SENSE_LOG_TO_SERIAL && !SENSE_LOG_DIFFERENT_THINGS_TO_DIFFERENT_OUTPUTS)
+
+            config SENSE_PRINT_CSI_SD
+                bool "print CSI"
+                default true
+                help
+                    Whether to print the receives CSI.
+
+            config SENSE_PRINT_STI_SD
+                bool "print sti value"
+                default true
+                help
+                    Whether to print the STI value (proxy of presence/motion) to a file on the SD card (and other outputs if different logging is not enabled).
+                    
+            config SENSE_PRINT_FUSED_HEART_SD
+                bool "print fused heart amplitude value"
+                default true
+                help
+                    Whether to print the amplitude value of the subcarriers fused for extracting heart features to a file on the SD card (and other outputs if different logging is not enabled).
+
+            config SENSE_PRINT_FUSED_BREATH_SD
+                bool "print fused breath amplitude value"
+                default true
+                help
+                    Whether to print the amplitude value of the subcarriers fused for extracting breathing features to a file on the SD card (and other outputs if different logging is not enabled).
+                
+            config SENSE_PRINT_FILTERED_HEART_SD
+                bool "print filtered heart value"
+                default true
+                help
+                    Whether to print the bandpass filtered amplitude value of the subcarriers fused for extracting heart features to a file on the SD card (and other outputs if different logging is not enabled).
     
-    config SENSE_PRINT_BREATHING_POI
-        bool "print breathing poi"
-        default true
-        help
-            Whether to print the STI value (proxy of presence/motion) to whichever method is selected for transmitting/storing data.
+            config SENSE_PRINT_FILTERED_BREATH_SD
+                bool "print filtered breath value"
+                default true
+                help
+                    Whether to print the bandpass filtered amplitude value of the subcarriers fused for extracting breathing features to a file on the SD card (and other outputs if different logging is not enabled).
+    
+            config SENSE_PRINT_HEART_FEATURES_SD
+                bool "print heart features"
+                default true
+                help
+                    Whether to print the calculated heart features to a file on the SD card (and other outputs if different logging is not enabled).
+    
+            config SENSE_PRINT_BREATHING_FEATURES_SD
+                bool "print breathing features"
+                default true
+                help
+                    Whether to print the calculated breathing features to a file on the SD card (and other outputs if different logging is not enabled).
+    
+            config SENSE_PRINT_HEART_POI_SD
+                bool "print heart poi"
+                default true
+                help
+                    Whether to print the whether a new POI (peak/valley) was detected in the filtered heart signal and the POI's attributes to a file on the SD card (and other outputs if different logging is not enabled).
+            
+            config SENSE_PRINT_BREATHING_POI_SD
+                bool "print breathing poi"
+                default true
+                help
+                    Whether to print the whether a new POI (peak/valley) was detected in the filtered breathing signal and the POI's attributes to a file on the SD card (and other outputs if different logging is not enabled).
+        endmenu
+        
+        menu "Features to log to serial"
+            visible if SENSE_LOG_TO_SERIAL && SENSE_LOG_DIFFERENT_THINGS_TO_DIFFERENT_OUTPUTS
 
+            config SENSE_PRINT_CSI_S
+                bool "print CSI"
+                default true
+                help
+                    Whether to print the receives CSI.
+
+            config SENSE_PRINT_STI_S
+                bool "print sti value"
+                default true
+                help
+                    Whether to print the STI value (proxy of presence/motion) to serial.
+                    
+            config SENSE_PRINT_FUSED_HEART_S
+                bool "print fused heart amplitude value"
+                default true
+                help
+                    Whether to print the amplitude value of the subcarriers fused for extracting heart features to serial.
+
+            config SENSE_PRINT_FUSED_BREATH_S
+                bool "print fused breath amplitude value"
+                default true
+                help
+                    Whether to print the amplitude value of the subcarriers fused for extracting breathing features to serial.
+                
+            config SENSE_PRINT_FILTERED_HEART_S
+                bool "print filtered heart value"
+                default true
+                help
+                    Whether to print the bandpass filtered amplitude value of the subcarriers fused for extracting heart features to serial.
+    
+            config SENSE_PRINT_FILTERED_BREATH_S
+                bool "print filtered breath value"
+                default true
+                help
+                    Whether to print the bandpass filtered amplitude value of the subcarriers fused for extracting breathing features to serial.
+    
+            config SENSE_PRINT_HEART_FEATURES_S
+                bool "print heart features"
+                default true
+                help
+                    Whether to print the calculated heart features to serial.
+    
+            config SENSE_PRINT_BREATHING_FEATURES_S
+                bool "print breathing features"
+                default true
+                help
+                    Whether to print the calculated breathing features to serial.
+    
+            config SENSE_PRINT_HEART_POI_S
+                bool "print heart poi"
+                default true
+                help
+                    Whether to print the whether a new POI (peak/valley) was detected in the filtered heart signal and the POI's attributes to serial.
+            
+            config SENSE_PRINT_BREATHING_POI_S
+                bool "print breathing poi"
+                default true
+                help
+                    Whether to print the whether a new POI (peak/valley) was detected in the filtered breathing signal and the POI's attributes to serial.
+    
+        endmenu
+        
+    endmenu
    
 endmenu

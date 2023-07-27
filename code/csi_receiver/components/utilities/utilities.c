@@ -115,7 +115,7 @@ void free_list_int(ListInt *l){
     l = NULL;
 }
 
-void create_list_float(ListInt *l, size_t initialSize){
+void create_list_float(ListFloat *l, size_t initialSize){
     l->list = malloc_or_die(initialSize*sizeof(float));
     l->length = initialSize;
     l->elements = 0;

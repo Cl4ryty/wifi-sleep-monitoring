@@ -175,7 +175,7 @@ void append_to_list_int(ListInt *l, int new_element);
 
 void free_list_int(ListInt *l);
 
-void create_list_float(ListInt *l, size_t initialSize);
+void create_list_float(ListFloat *l, size_t initialSize);
 
 void append_to_list_float(ListFloat *l, float new_element);
 
