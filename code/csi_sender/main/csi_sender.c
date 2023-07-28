@@ -6,7 +6,7 @@
 // how many raw 802.11 frames to send per second ~equal to the received CSI frames at the AP
 #define PACKETS_PER_SECOND CONFIG_FRAMES_PER_SECOND
 
-static const char *TAG = "wifi station";
+static const char *TAG = "csi sender";
 
 // see https://github.com/espressif/esp-idf/blob/ae425ec0b877cdaab12835385bb441d59704e261/docs/en/api-guides/wifi.rst#wi-fi-80211-packet-send
 

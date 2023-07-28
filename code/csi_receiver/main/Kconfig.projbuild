@@ -1,4 +1,32 @@
-menu "Example Configuration"
+menu "CSI Receiver Configuration"
+
+    config FRAMES_PER_SECOND
+        int "Frames per second"
+        default 50
+        range 0 1000
+        help
+            The number of CSI frames received per second - this should correspond to the number of Wi-Fi frames the CSI sender sends each second.
+
+    config TIME_RANGE_TO_KEEP
+        int "Time range of samples too keep"
+        default 30
+        range 0 120
+        help
+            The time range of samples kept for processing in seconds.
+
+    config FFT_EVERY_X_SECONDS
+        int "FFT every x seconds"
+        default 10
+        range 0 1000
+        help
+            The interval (in seconds) after which FFT rate estimations performed.
+
+    config MRC_PCA_EVERY_X_SECONDS
+        int "MRC-PCA every x seconds"
+        default 120
+        range 0 1000
+        help
+            The interval (in seconds) after which the MRC-PCA is performed to calculate the weights for subcarrier fusion.
 
     menu "Wi-Fi settings"
         config ESP_WIFI_SSID
@@ -45,6 +73,28 @@ menu "Example Configuration"
             default false
             help
                 Enable logging different features to different outputs. Which features are logged to which output can be selected using the suboptions. Enabling this option but logging many of the same things to each output slows down processing, so it might make sense to just log everything you want to all outputs.
+
+        menu "SD pins"
+            visible if SENSE_LOG_TO_SD
+
+            config SD_PIN_MISO
+                int "MISO pin number"
+                default 13
+
+            config SD_PIN_MOSI
+                int "MOSI pin number"
+                default 11
+
+            config SD_PIN_CLK
+                int "CLK pin number"
+                default 12
+
+            config SD_PIN_CS
+                int "CS pin number"
+                default 46
+
+        endmenu
+
 
         menu "Features to log to sd or all enabled outputs"
             visible if SENSE_LOG_TO_SD || (SENSE_LOG_TO_SERIAL && !SENSE_LOG_DIFFERENT_THINGS_TO_DIFFERENT_OUTPUTS)
