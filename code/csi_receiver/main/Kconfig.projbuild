@@ -20,13 +20,40 @@ menu "CSI Receiver Configuration"
         range 0 1000
         help
             The interval (in seconds) after which FFT rate estimations performed.
+       
+    config MRC_PCA_ON_TIMER
+            bool "MRC-PCA on timer"
+            default true
+            help
+                Whether to perform MRC-PCA every X seconds as if on a timer.
 
     config MRC_PCA_EVERY_X_SECONDS
+        depends on MRC_PCA_ON_TIMER
         int "MRC-PCA every x seconds"
         default 120
         range 0 1000
         help
             The interval (in seconds) after which the MRC-PCA is performed to calculate the weights for subcarrier fusion.
+
+    config MRC_PCA_AFTER_MOVEMENT
+        bool "MRC-PCA after large movement"
+        default false
+        help
+            Whether to perform MRC-PCA (calculating the coefficients for subcarrier fusion) after large movement was detected - if it hasn't been performed too recently.
+    
+    config MRC_PCA_ON_NEW_PRESENCE
+        bool "MRC-PCA on new presence"
+        default false
+        help
+            Whether to perform MRC-PCA (calculating the coefficients for subcarrier fusion) after new presence was detected - if it hasn't been performed too recently.
+
+    config MRC_PCA_MINIMUM_INTERVAL
+        depends on MRC_PCA_AFTER_MOVEMENT || MRC_PCA_ON_NEW_PRESENCE
+        int "Minimum MRC-PCA interval"
+        default 10
+        range 0 1000
+        help
+            Minimum interval (in seconds) after which MRC-PCA can be performed again.
 
     menu "Wi-Fi settings"
         config ESP_WIFI_SSID
