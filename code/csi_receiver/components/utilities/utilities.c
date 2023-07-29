@@ -202,7 +202,7 @@ void running_mean_initialize(RunningMean *r, float input, int input_index, unsig
 
 void running_mean_append(RunningMean *r, float input, unsigned input_timestamp, unsigned window_size){
     // check if the last sample fell out of the time frame and remove in necessary
-    while(input_timestamp - r->time_array[r->last_sample_index] > window_size){
+    while(r->current_number_of_elements > 0 && (input_timestamp - r->time_array[r->last_sample_index] > window_size)){
         r->current_sum -= r->value_array[r->last_sample_index];
         r->current_number_of_elements -= 1;
         r->last_sample_index = get_next_index(r->last_sample_index, r->array_size);
