@@ -76,6 +76,14 @@ uint8_t csi_sender_mac[] = {0x0a, 0x0a, 0x0a, 0x0a, 0x0a, 0x0a};
 
 static const char *TAG = "csi receiver"; 
 static QueueHandle_t g_csi_info_queue = NULL;
+static QueueHandle_t buffer_queue = NULL;
+
+typedef struct
+{
+    size_t length;
+    char *buffer;
+}BufferObject;
+
 
 // defines for UDP broadcast
 #define HOST_IP_ADDR "192.168.4.255" // broadcastp address for the standard AP-network
@@ -249,32 +257,33 @@ static void udp_client_task(void *pvParameters)
 
         while (1) 
         {
-            char *buffer = malloc_or_die(8 * 1024);
-            size_t len = 0;
+            // char *buffer = malloc_or_die(8 * 1024);
+            // size_t len = 0;
+            // // add a message to the start
+            // len += sprintf(buffer + len, "Message from ESP32;");
+
+
+            // // use the broadcast functions to generate the payload
+            // for(int i=0; i<broadcast_functions.elements-1; i++)
+            // {
+            //     len = (*broadcast_functions.list[i])(buffer, len);
+            //     len += sprintf(buffer + len, ";"); // separate with semicolon
+            // }
+            // len = (*broadcast_functions.list[broadcast_functions.elements-1])(buffer, len);
             // create payload
-
-            // add a message to the start
-            len += sprintf(buffer + len, "Message from ESP32;");
-
-
-            // use the broadcast functions to generate the payload
-            for(int i=0; i<broadcast_functions.elements-1; i++)
-            {
-                len = (*broadcast_functions.list[i])(buffer, len);
-                len += sprintf(buffer + len, ";"); // separate with semicolon
+            BufferObject *buffer_object = NULL;
+            while (xQueueReceive(buffer_queue, &buffer_object, portMAX_DELAY)) {
+            
+                int err = sendto(sock, buffer_object->buffer, buffer_object->length, 0, (struct sockaddr *)&dest_addr, sizeof(dest_addr));
+                if (err < 0) {
+                    ESP_LOGE(TAG, "Error occurred during sending: errno %d", errno);
+                    break;
+                }
+                // ESP_LOGI(TAG, "Message sent");
+                free(buffer_object);
             }
-            len = (*broadcast_functions.list[broadcast_functions.elements-1])(buffer, len);
-
-
-            int err = sendto(sock, buffer, len, 0, (struct sockaddr *)&dest_addr, sizeof(dest_addr));
-            if (err < 0) {
-                ESP_LOGE(TAG, "Error occurred during sending: errno %d", errno);
-                break;
-            }
-            ESP_LOGI(TAG, "Message sent");
-            free(buffer);
        
-            vTaskDelay((1000/BROADCAST_RATE) / portTICK_PERIOD_MS);
+            // vTaskDelay((1000/BROADCAST_RATE) / portTICK_PERIOD_MS);
         }
 
         if (sock != -1) 
@@ -752,7 +761,6 @@ static void csi_data_print_task(void *arg)
         }
 #endif
 
-        
 #ifdef CONFIG_MRC_PCA_AFTER_MOVEMENT
         // perform MRC-PCA after large movement has been detected
         if(large_movement_detected_previously && !large_movement_detected && timestamp_array[current_last_element]-previous_mrc_pca_timestamp >= CONFIG_MRC_PCA_MINIMUM_INTERVAL*SECONDS_TO_MICROSECONDS){
@@ -1314,7 +1322,7 @@ static void csi_data_print_task(void *arg)
             append_to_list_float(&sti_list, sti);
         }
 
-#if !defined(CONFIG_SENSE_LOG_DIFFERENT_THINGS_TO_DIFFERENT_OUTPUTS) && (defined(CONFIG_SENSE_LOG_TO_SERIAL) || defined(CONFIG_SENSE_LOG_TO_SD))
+#if !defined(CONFIG_SENSE_LOG_DIFFERENT_THINGS_TO_DIFFERENT_OUTPUTS) && (defined(CONFIG_SENSE_LOG_TO_SERIAL) || defined(CONFIG_SENSE_LOG_TO_SD) || defined(CONFIG_SENSE_LOG_TO_UDP))
         size_t len = 0;
         size_t calibration_len = 0;
 
@@ -1460,6 +1468,20 @@ static void csi_data_print_task(void *arg)
         if(running_calibration || count==1){
             printf("%s", calibration_buffer);
         }
+#endif
+
+#if defined(CONFIG_SENSE_LOG_TO_UDP) && !defined(CONFIG_SENSE_LOG_DIFFERENT_THINGS_TO_DIFFERENT_OUTPUTS)
+        
+        BufferObject *q_data = malloc_or_die(len + sizeof(size_t));
+        q_data->length = len;
+        q_data->buffer = malloc_or_die(len);
+        memcpy(q_data->buffer, buffer, len);
+
+        if (!buffer_queue || xQueueSend(buffer_queue, &q_data, 0) == pdFALSE) {
+            ESP_LOGW(TAG, "buffer_queue full");
+            free(q_data);
+        }
+        
 #endif
         
 #if defined(CONFIG_SENSE_LOG_TO_SD) && !defined(CONFIG_SENSE_LOG_DIFFERENT_THINGS_TO_DIFFERENT_OUTPUTS)
@@ -1692,11 +1714,11 @@ static void csi_data_print_task(void *arg)
 #endif
 
 #ifdef CONFIG_SENSE_PRINT_DETECTION_S
-            len += sprintf(buffer + len, ",detected_presence,detected_small_movement,detected_large_movement");
+            len1 += sprintf(buffer + len1, ",detected_presence,detected_small_movement,detected_large_movement");
 #endif
 
 #ifdef CONFIG_SENSE_PRINT_THRESHOLDS_S
-            len += sprintf(buffer + len, ",threshold_presence,f_presence,threshold_small_movement,f_small_movement,threshold_large_movement,f_large_movement");
+            len1 += sprintf(buffer + len1, ",threshold_presence,f_presence,threshold_small_movement,f_small_movement,threshold_large_movement,f_large_movement");
 #endif
 
             len1 += sprintf(buffer + len1, ",sequence,timestamp,source_mac,first_word_invalid,len,rssi,rate,sig_mode,mcs,bandwidth,smoothing,not_sounding,aggregation,stbc,fec_coding,sgi,noise_floor,ampdu_cnt,channel,secondary_channel,local_timestamp,ant,sig_len,rx_state");
@@ -1760,11 +1782,11 @@ static void csi_data_print_task(void *arg)
 #endif
 
 #ifdef CONFIG_SENSE_PRINT_DETECTION_S
-            len += sprintf(buffer + len, ",%d,%d,%d", presence_detected, small_movement_detected, large_movement_detected);
+            len1 += sprintf(buffer + len1, ",%d,%d,%d", presence_detected, small_movement_detected, large_movement_detected);
 #endif
 
 #ifdef CONFIG_SENSE_PRINT_THRESHOLDS_S
-            len += sprintf(buffer + len, ",%f,%f,%f,%f,%f,%f", t_presence, f_presence, t_small_movement, f_small_movement, t_large_movement, f_large_movement);
+            len1 += sprintf(buffer + len1, ",%f,%f,%f,%f,%f,%f", t_presence, f_presence, t_small_movement, f_small_movement, t_large_movement, f_large_movement);
 #endif
 
         len1 += sprintf(buffer + len1, ",%d,%u," MACSTR ",%d,%d,%d,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%d,%u,%u,%u,%u,%u,%u,%u",
@@ -1789,6 +1811,149 @@ static void csi_data_print_task(void *arg)
         printf("%s", buffer);
         if(running_calibration || count==1){
             printf("%s", calibration_buffer);
+        }
+#endif
+
+#if defined(CONFIG_SENSE_LOG_DIFFERENT_THINGS_TO_DIFFERENT_OUTPUTS) && defined(CONFIG_SENSE_LOG_TO_UDP)
+        size_t len2 = 0;
+
+        if (!count) {
+            ESP_LOGI(TAG, "================ CSI RECV ================");
+            len2 += sprintf(buffer + len2, "type");
+#ifdef CONFIG_SENSE_PRINT_STI_U
+            len2 += sprintf(buffer + len2, ",sti");
+#endif
+
+#ifdef CONFIG_SENSE_PRINT_FUSED_HEART_U
+            len2 += sprintf(buffer + len2, ",fused_heart_amplitude");
+#endif
+
+#ifdef CONFIG_SENSE_PRINT_FUSED_BREATH_U
+            len2 += sprintf(buffer + len2, ",fused_breath_amplitude");
+#endif
+
+#ifdef CONFIG_SENSE_PRINT_FILTERED_HEART_U
+            len2 += sprintf(buffer + len2, ",filtered_heart");
+#endif
+
+#ifdef CONFIG_SENSE_PRINT_FILTERED_BREATH_U
+            len2 += sprintf(buffer + len2, ",filtered_breath");
+#endif
+
+#ifdef CONFIG_SENSE_PRINT_HEART_FEATURES_U
+            len2 += sprintf(buffer + len2, ",heart_features");
+#endif
+
+#ifdef CONFIG_SENSE_PRINT_BREATHING_FEATURES_U
+            len2 += sprintf(buffer + len2, ",breath_features");
+#endif
+
+#ifdef CONFIG_SENSE_PRINT_HEART_POI_U
+            len2 += sprintf(buffer + len2, ",heart_poi_found,new_heart_poi");
+#endif
+
+#ifdef CONFIG_SENSE_PRINT_BREATHING_POI_U
+            len2 += sprintf(buffer + len2, ",breath_poi_found,new_breath_poi");
+#endif
+
+#ifdef CONFIG_SENSE_PRINT_DETECTION_U
+            len2 += sprintf(buffer + len2, ",detected_presence,detected_small_movement,detected_large_movement");
+#endif
+
+#ifdef CONFIG_SENSE_PRINT_THRESHOLDS_U
+            len2 += sprintf(buffer + len2, ",threshold_presence,f_presence,threshold_small_movement,f_small_movement,threshold_large_movement,f_large_movement");
+#endif
+
+            len2 += sprintf(buffer + len2, ",sequence,timestamp,source_mac,first_word_invalid,len,rssi,rate,sig_mode,mcs,bandwidth,smoothing,not_sounding,aggregation,stbc,fec_coding,sgi,noise_floor,ampdu_cnt,channel,secondary_channel,local_timestamp,ant,sig_len,rx_state");
+#ifdef CONFIG_SENSE_PRINT_CSI_U   
+            len2 += sprintf(buffer + len2, ",data");
+#endif
+            len2 += sprintf(buffer + len2, "\n");
+        
+        }
+        
+        len2 += sprintf(buffer + len2, "CSI_DATA");
+#ifdef CONFIG_SENSE_PRINT_STI_U
+            len2 += sprintf(buffer + len2, ",%f", sti);
+#endif
+
+#ifdef CONFIG_SENSE_PRINT_FUSED_HEART_U
+            len2 += sprintf(buffer + len2, ",%f", fused_amplitude_heart);
+#endif
+
+#ifdef CONFIG_SENSE_PRINT_FUSED_BREATH_U
+            len2 += sprintf(buffer + len2, ",%f", fused_amplitude_breath);
+#endif
+
+#ifdef CONFIG_SENSE_PRINT_FILTERED_HEART_U
+            len2 += sprintf(buffer + len2, ",%f", filtered_heart[current_last_element]);
+#endif
+
+#ifdef CONFIG_SENSE_PRINT_FILTERED_BREATH_U
+            len2 += sprintf(buffer + len2, ",%f", filtered_breath[current_last_element]);
+#endif
+
+#ifdef CONFIG_SENSE_PRINT_HEART_FEATURES_U
+            len2 += sprintf(buffer + len2, ",[%f %f %f %f %f %f %f %f %f %f %f %f %f %f %f %f %f %f %f]", heart_features.instantaneous_peak_rate, heart_features.instantaneous_valley_rate, heart_features.mean_peak_rate_over_window.current_mean, heart_features.mean_valley_rate_over_window.current_mean, heart_features.fft_rate_over_window, heart_features.variance_of_peak_rate_in_window, heart_features.variance_of_valley_rate_in_window, heart_features.mean_up_stroke_length.current_mean, heart_features.mean_down_stroke_length.current_mean, heart_features.up_stroke_length_variance, heart_features.down_stroke_length_variance, heart_features.up_to_down_length_ratio, heart_features.fractional_up_stroke_time, heart_features.mean_up_stroke_amplitude.current_mean, heart_features.mean_down_stroke_amplitude.current_mean, heart_features.up_stroke_amplitude_variance, heart_features.down_stroke_amplitude_variance, heart_features.up_to_down_amplitude_ratio, heart_features.fractional_up_stroke_amplitude);
+#endif
+
+#ifdef CONFIG_SENSE_PRINT_BREATHING_FEATURES_U
+            len2 += sprintf(buffer + len2, ",[%f %f %f %f %f %f %f %f %f %f %f %f %f %f %f %f %f %f %f]", breath_features.instantaneous_peak_rate, breath_features.instantaneous_valley_rate, breath_features.mean_peak_rate_over_window.current_mean, breath_features.mean_valley_rate_over_window.current_mean, breath_features.fft_rate_over_window, breath_features.variance_of_peak_rate_in_window, breath_features.variance_of_valley_rate_in_window, breath_features.mean_up_stroke_length.current_mean, breath_features.mean_down_stroke_length.current_mean, breath_features.up_stroke_length_variance, breath_features.down_stroke_length_variance, breath_features.up_to_down_length_ratio, breath_features.fractional_up_stroke_time, breath_features.mean_up_stroke_amplitude.current_mean, breath_features.mean_down_stroke_amplitude.current_mean, breath_features.up_stroke_amplitude_variance, breath_features.down_stroke_amplitude_variance, breath_features.up_to_down_amplitude_ratio, breath_features.fractional_up_stroke_amplitude);
+#endif
+
+#ifdef CONFIG_SENSE_PRINT_HEART_POI_U
+            len2 += sprintf(buffer + len2, ",%d", heart_found_poi);
+            if(heart_found_poi){
+                len2 += sprintf(buffer + len2, ",[%d %u %f %d]", new_heart_poi->is_peak, new_heart_poi->time_difference_to_previous_poi, new_heart_poi->amplitude_difference_to_previous_poi, new_heart_poi->index);
+            }else{
+                len2 += sprintf(buffer + len2, ",[]");
+            }
+#endif
+
+#ifdef CONFIG_SENSE_PRINT_BREATHING_POI_U
+            len2 += sprintf(buffer + len2, ",%d", breath_found_poi);
+            if(breath_found_poi){
+                len2 += sprintf(buffer + len2, ",[%d %u %f %d]", new_breath_poi->is_peak, new_breath_poi->time_difference_to_previous_poi, new_breath_poi->amplitude_difference_to_previous_poi, new_breath_poi->index);
+            }else{
+                len2 += sprintf(buffer + len2, ",[]");
+            }
+#endif
+
+#ifdef CONFIG_SENSE_PRINT_DETECTION_U
+            len2 += sprintf(buffer + len2, ",%d,%d,%d", presence_detected, small_movement_detected, large_movement_detected);
+#endif
+
+#ifdef CONFIG_SENSE_PRINT_THRESHOLDS_U
+            len2 += sprintf(buffer + len2, ",%f,%f,%f,%f,%f,%f", t_presence, f_presence, t_small_movement, f_small_movement, t_large_movement, f_large_movement);
+#endif
+
+        len2 += sprintf(buffer + len2, ",%d,%u," MACSTR ",%d,%d,%d,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%d,%u,%u,%u,%u,%u,%u,%u",
+                    count, esp_log_timestamp(),
+                    MAC2STR(info->mac), info->first_word_invalid, info->len, rx_ctrl->rssi, rx_ctrl->rate, rx_ctrl->sig_mode,
+                    rx_ctrl->mcs, rx_ctrl->cwb, rx_ctrl->smoothing, rx_ctrl->not_sounding,
+                    rx_ctrl->aggregation, rx_ctrl->stbc, rx_ctrl->fec_coding, rx_ctrl->sgi,
+                    rx_ctrl->noise_floor, rx_ctrl->ampdu_cnt, rx_ctrl->channel, rx_ctrl->secondary_channel,
+                    rx_ctrl->timestamp, rx_ctrl->ant, rx_ctrl->sig_len, rx_ctrl->rx_state);
+
+#ifdef CONFIG_SENSE_PRINT_CSI_U          
+        len2 += sprintf(buffer + len2, ",\"[%d", info->buf[0]);
+
+        for (int i = 1; i < info->len; i++) {
+            len2 += sprintf(buffer + len2, ",%d", info->buf[i]);
+        }
+
+        len2 += sprintf(buffer + len2, "]\"");
+#endif
+        len2 += sprintf(buffer + len2, "\n");
+
+        BufferObject *q_data = malloc_or_die(len2 + sizeof(size_t));
+        q_data->length = len2;
+        q_data->buffer = malloc_or_die(len2);
+        memcpy(q_data->buffer, buffer, len2);
+
+        if (!buffer_queue || xQueueSend(buffer_queue, &q_data, 0) == pdFALSE) {
+            ESP_LOGW(TAG, "buffer_queue full");
+            free(q_data);
         }
 #endif
         
@@ -2021,7 +2186,8 @@ void app_main(void)
     analysis_init();
 
     g_csi_info_queue = xQueueCreate(256, sizeof(void *));
+    buffer_queue = xQueueCreate(2048, sizeof(void *));
     xTaskCreate(csi_data_print_task, "csi_data_print", 8 * 1024, NULL, 0, NULL);
-    //xTaskCreate(udp_client_task, "udp_client_task", 4 * 1024, NULL, 0, NULL);
+    xTaskCreate(udp_client_task, "udp_client_task", 4 * 1024, NULL, 0, NULL);
     xTaskCreate(udp_calibration_task, "udp_calibration_task", 4 * 1024, NULL, 0, NULL);
 }

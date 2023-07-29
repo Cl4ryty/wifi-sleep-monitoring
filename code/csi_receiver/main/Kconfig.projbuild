@@ -95,6 +95,12 @@ menu "CSI Receiver Configuration"
             help
                 Enable logging to serial. Which features are logged can be selected using the suboptions.
 
+        config SENSE_LOG_TO_UDP
+            bool "Log to UDP broadcast"
+            default false
+            help
+                Enable logging to UDP broadcast. Which features are logged can be selected using the suboptions.
+
         config SENSE_LOG_DIFFERENT_THINGS_TO_DIFFERENT_OUTPUTS
             bool "Log different things to different outputs"
             default false
@@ -124,7 +130,7 @@ menu "CSI Receiver Configuration"
 
 
         menu "Features to log to sd or all enabled outputs"
-            visible if SENSE_LOG_TO_SD || (SENSE_LOG_TO_SERIAL && !SENSE_LOG_DIFFERENT_THINGS_TO_DIFFERENT_OUTPUTS)
+            visible if SENSE_LOG_TO_SD || ((SENSE_LOG_TO_SERIAL || SENSE_LOG_TO_UDP) && !SENSE_LOG_DIFFERENT_THINGS_TO_DIFFERENT_OUTPUTS)
 
             config SENSE_PRINT_CSI_SD
                 bool "print CSI"
@@ -273,6 +279,83 @@ menu "CSI Receiver Configuration"
                 default true
                 help
                     Whether to print the whether a new POI (peak/valley) was detected in the filtered breathing signal and the POI's attributes to serial.
+    
+        endmenu
+
+        menu "Features to log to UDP"
+            visible if SENSE_LOG_TO_UDP && SENSE_LOG_DIFFERENT_THINGS_TO_DIFFERENT_OUTPUTS
+
+            config SENSE_PRINT_CSI_U
+                bool "print CSI"
+                default true
+                help
+                    Whether to print the receives CSI to UDP broadcast.
+
+            config SENSE_PRINT_STI_U
+                bool "print sti value"
+                default true
+                help
+                    Whether to print the STI value (proxy of presence/motion) to UDP broadcast.
+            
+            config SENSE_PRINT_DETECTION_U
+                bool "print presence / movement detection results"
+                default true
+                help
+                    Whether to print the presence / movement detection results (based on the sti being larger than the specific threshold) to UDP broadcast.
+            
+            config SENSE_PRINT_THRESHOLDS_U
+                bool "print presence / movement thresholds"
+                default true
+                help
+                    Whether to print the presence / movement detection thresholds and their F scores on the calibration data to UDP broadcast.
+                                
+            config SENSE_PRINT_FUSED_HEART_U
+                bool "print fused heart amplitude value"
+                default true
+                help
+                    Whether to print the amplitude value of the subcarriers fused for extracting heart features to UDP broadcast.
+
+            config SENSE_PRINT_FUSED_BREATH_U
+                bool "print fused breath amplitude value"
+                default true
+                help
+                    Whether to print the amplitude value of the subcarriers fused for extracting breathing features to UDP broadcast.
+                
+            config SENSE_PRINT_FILTERED_HEART_U
+                bool "print filtered heart value"
+                default true
+                help
+                    Whether to print the bandpass filtered amplitude value of the subcarriers fused for extracting heart features to UDP broadcast.
+    
+            config SENSE_PRINT_FILTERED_BREATH_U
+                bool "print filtered breath value"
+                default true
+                help
+                    Whether to print the bandpass filtered amplitude value of the subcarriers fused for extracting breathing features to UDP broadcast.
+    
+            config SENSE_PRINT_HEART_FEATURES_U
+                bool "print heart features"
+                default true
+                help
+                    Whether to print the calculated heart features to UDP broadcast.
+    
+            config SENSE_PRINT_BREATHING_FEATURES_U
+                bool "print breathing features"
+                default true
+                help
+                    Whether to print the calculated breathing features to UDP broadcast.
+    
+            config SENSE_PRINT_HEART_POI_U
+                bool "print heart poi"
+                default true
+                help
+                    Whether to print the whether a new POI (peak/valley) was detected in the filtered heart signal and the POI's attributes to UDP broadcast.
+            
+            config SENSE_PRINT_BREATHING_POI_U
+                bool "print breathing poi"
+                default true
+                help
+                    Whether to print the whether a new POI (peak/valley) was detected in the filtered breathing signal and the POI's attributes to UDP broadcast.
     
         endmenu
         
