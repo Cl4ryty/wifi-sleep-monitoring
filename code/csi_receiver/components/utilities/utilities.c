@@ -288,11 +288,12 @@ void features_initialize(Features *f){
     f->fractional_up_stroke_amplitude = -1;
 }
 
-void poi_initialize(POI *poi, bool is_peak, unsigned time_difference, float amplitude_difference, int index){
+void poi_initialize(POI *poi, bool is_peak, unsigned time_difference, float amplitude_difference, int index, int index_difference_from_last_intercept){
     poi->is_peak = is_peak;
     poi->time_difference_to_previous_poi = time_difference;
     poi->amplitude_difference_to_previous_poi = amplitude_difference;
     poi->index = index;
+    poi->index_difference_from_last_intercept = index_difference_from_last_intercept;
 }
 
 void poi_list_initialize(POI_List *poi_list, int length){

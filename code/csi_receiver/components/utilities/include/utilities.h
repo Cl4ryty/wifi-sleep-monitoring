@@ -112,6 +112,7 @@ typedef struct
     unsigned time_difference_to_previous_poi;
     float amplitude_difference_to_previous_poi;
     int index;
+    int index_difference_from_last_intercept;
 } POI;
 
 typedef struct
@@ -201,7 +202,7 @@ void MAC_struct_check_if_indices_become_invalid(MAC_struct *m, int new_last_inde
 
 void features_initialize(Features *f);
 
-void poi_initialize(POI *poi, bool is_peak, unsigned time_difference, float amplitude_difference, int index);
+void poi_initialize(POI *poi, bool is_peak, unsigned time_difference, float amplitude_difference, int index, int index_difference_from_last_intercept);
 
 void poi_list_initialize(POI_List *poi_list, int length);
 
