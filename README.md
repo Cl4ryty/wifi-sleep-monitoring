@@ -29,3 +29,8 @@
    - build and flash e.g. using `idf.py build flash`
      - if you have multiple ESPs connected to the computer, or if the correct device isn't found automatically, you should specify the port e.g. `idf.py -p build flash`
    - once flashing was successful, you can monitor the serial output (`idf.py monitor`)
+4. Run live visualization
+   - the live visualization can plot features logged to serial or UDP
+   - which of the logged features are plotted can be selected through command line arguments (see the beginnning of the file for available options)
+   - to run visualization of features logged to serial run the following command from within the `csi_receiver` folder: `idf.py monitor | python ../live_visualization/visualization.py`
+   - when plotting the features logged to UDP just running the visualization script is sufficient, however, the device running the script needs to be connected to the receiver's Wi-Fi network to receive the udp
