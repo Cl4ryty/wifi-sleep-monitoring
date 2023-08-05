@@ -14,6 +14,7 @@
 #include "utilities.h"
 #include "using_eigen.h"
 #include "fft.h"
+#include "run_tf_inference.h"
 
 // constants
 #define SECONDS_TO_MICROSECONDS 1000000
@@ -64,7 +65,6 @@
 #ifndef CONFIG_MRC_PCA_EVERY_X_SECONDS
     #define MRC_PCA_EVERY_X_SECONDS     30
 #endif
-
 
 #define NUMBER_SUBCARRIERS 52 // we only use LLTF so get 64 subcarriers -TODO: change to usable subcarriers only to save RAM
 #define MAX_NUMBER_OF_SAMPLES_KEPT  TIME_RANGE_TO_KEEP*CSI_RATE
@@ -145,6 +145,7 @@ char activity_id = 0;
 bool running_calibration = false;
 
 ListChar id_list;
+float sti;
 ListFloat sti_list;
 
 float t_presence = -1;
@@ -173,6 +174,73 @@ bool ran_mrc_in_the_beginning = false;
 
 nvs_handle_t my_handle;
 
+void run_sleep_stage_classification(){
+    // create the buffer with the features in the correct order as input to the model
+    float model_input[42];
+    // sti, detected motion / presence, breath features, heart features
+    model_input[0] = sti;
+    model_input[1] = presence_detected;
+    model_input[2] = small_movement_detected;
+    model_input[3] = large_movement_detected;
+    
+    // breath features
+    model_input[4] = breath_features.instantaneous_peak_rate;
+    model_input[5] = breath_features.instantaneous_valley_rate;
+    model_input[6] = breath_features.mean_peak_rate_over_window.current_mean;
+    model_input[7] = breath_features.mean_valley_rate_over_window.current_mean;
+    model_input[8] = breath_features.fft_rate_over_window;
+    model_input[9] = breath_features.variance_of_peak_rate_in_window;
+    model_input[10] = breath_features.variance_of_valley_rate_in_window;
+
+    model_input[11] = breath_features.mean_up_stroke_length.current_mean;
+    model_input[12] = breath_features.mean_down_stroke_length.current_mean;
+    model_input[13] = breath_features.up_stroke_length_variance;
+    model_input[14] = breath_features.down_stroke_length_variance;
+    model_input[15] = breath_features.up_to_down_length_ratio;
+    model_input[16] = breath_features.fractional_up_stroke_time;
+
+    model_input[17] = breath_features.mean_up_stroke_amplitude.current_mean;
+    model_input[18] = breath_features.mean_down_stroke_amplitude.current_mean;
+    model_input[19] = breath_features.up_stroke_amplitude_variance;
+    model_input[20] = breath_features.down_stroke_amplitude_variance;
+    model_input[21] = breath_features.up_to_down_amplitude_ratio;
+    model_input[22] = breath_features.fractional_up_stroke_amplitude;
+
+    // heart features
+    model_input[23] = heart_features.instantaneous_peak_rate;
+    model_input[24] = heart_features.instantaneous_valley_rate;
+    model_input[25] = heart_features.mean_peak_rate_over_window.current_mean;
+    model_input[26] = heart_features.mean_valley_rate_over_window.current_mean;
+    model_input[27] = heart_features.fft_rate_over_window;
+    model_input[28] = heart_features.variance_of_peak_rate_in_window;
+    model_input[29] = heart_features.variance_of_valley_rate_in_window;
+
+    model_input[30] = heart_features.mean_up_stroke_length.current_mean;
+    model_input[31] = heart_features.mean_down_stroke_length.current_mean;
+    model_input[32] = heart_features.up_stroke_length_variance;
+    model_input[33] = heart_features.down_stroke_length_variance;
+    model_input[34] = heart_features.up_to_down_length_ratio;
+    model_input[35] = heart_features.fractional_up_stroke_time;
+
+    model_input[36] = heart_features.mean_up_stroke_amplitude.current_mean;
+    model_input[37] = heart_features.mean_down_stroke_amplitude.current_mean;
+    model_input[38] = heart_features.up_stroke_amplitude_variance;
+    model_input[39] = heart_features.down_stroke_amplitude_variance;
+    model_input[40] = heart_features.up_to_down_amplitude_ratio;
+    model_input[41] = heart_features.fractional_up_stroke_amplitude;
+
+    // run inference
+    run_inference(&model_input);
+}
+
+static void run_inference_task(){
+    vTaskDelay((1000*CONFIG_START_INFERENCE_AFTER_X_SECONDS) / portTICK_PERIOD_MS);
+    while(true){
+        ESP_LOGI(TAG, "running inference");
+        run_sleep_stage_classification();
+        vTaskDelay((CONFIG_RUN_INFERENCE_EVERY_X_SECONDS*1000) / portTICK_PERIOD_MS);
+    }
+}
 
 size_t print_sti_to_buffer(char *buffer, size_t len){
     // sti values        
@@ -672,7 +740,6 @@ static void csi_data_print_task(void *arg)
             amplitude_hat[i] = amplitude_deviation[i] / amplitude_sigma;
         }
 
-        float sti;
         if(count == 0){
             // cannot calculate sti in first iteration through the code, as there's no previous_amplitude_hat yet
             memcpy(previous_amplitude_hat, amplitude_hat, sizeof(amplitude_hat));
@@ -2196,9 +2263,19 @@ void app_main(void)
     // setup_broadcast_messages();
     analysis_init();
 
+    model_setup();
+    ESP_LOGI(TAG, "completed model setup");
+
+    float input_array[] = {1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0};
+
+    //run_inference(&input_array);
+    run_inference(&input_array);
+    ESP_LOGI(TAG, "ran inferences");
+
     g_csi_info_queue = xQueueCreate(256, sizeof(void *));
     buffer_queue = xQueueCreate(2048, sizeof(void *));
     xTaskCreate(csi_data_print_task, "csi_data_print", 8 * 1024, NULL, 0, NULL);
     xTaskCreate(udp_client_task, "udp_client_task", 4 * 1024, NULL, 0, NULL);
     xTaskCreate(udp_calibration_task, "udp_calibration_task", 4 * 1024, NULL, 0, NULL);
+    xTaskCreate(run_inference_task, "run_inference_task", 4*1024, NULL, 0, NULL);
 }

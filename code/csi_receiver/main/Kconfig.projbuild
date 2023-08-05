@@ -55,6 +55,21 @@ menu "CSI Receiver Configuration"
         help
             Minimum interval (in seconds) after which MRC-PCA can be performed again.
 
+    config START_INFERENCE_AFTER_X_SECONDS
+        int "Start inference after x seconds"
+        default 120
+        range 0 1000
+        help
+            The interval (in seconds) after which inference (sleep stage classification) is run for the first time.
+        
+    config RUN_INFERENCE_EVERY_X_SECONDS
+        int "Run inference every x seconds"
+        default 120
+        range 0 1000
+        help
+            The interval (in seconds) after which is inference is run again.
+        
+        
     menu "Wi-Fi settings"
         config ESP_WIFI_SSID
             string "WiFi SSID"
