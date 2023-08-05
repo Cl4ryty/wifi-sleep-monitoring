@@ -174,6 +174,7 @@ bool ran_mrc_in_the_beginning = false;
 
 nvs_handle_t my_handle;
 
+#ifdef CONFIG_RUN_INFERENCE
 void run_sleep_stage_classification(){
     // create the buffer with the features in the correct order as input to the model
     float model_input[42];
@@ -241,6 +242,7 @@ static void run_inference_task(){
         vTaskDelay((CONFIG_RUN_INFERENCE_EVERY_X_SECONDS*1000) / portTICK_PERIOD_MS);
     }
 }
+#endif
 
 size_t print_sti_to_buffer(char *buffer, size_t len){
     // sti values        
@@ -2263,6 +2265,7 @@ void app_main(void)
     // setup_broadcast_messages();
     analysis_init();
 
+#ifdef CONFIG_RUN_INFERENCE
     model_setup();
     ESP_LOGI(TAG, "completed model setup");
 
@@ -2271,11 +2274,14 @@ void app_main(void)
     //run_inference(&input_array);
     run_inference(&input_array);
     ESP_LOGI(TAG, "ran inferences");
+#endif
 
     g_csi_info_queue = xQueueCreate(256, sizeof(void *));
     buffer_queue = xQueueCreate(2048, sizeof(void *));
     xTaskCreate(csi_data_print_task, "csi_data_print", 8 * 1024, NULL, 0, NULL);
     xTaskCreate(udp_client_task, "udp_client_task", 4 * 1024, NULL, 0, NULL);
     xTaskCreate(udp_calibration_task, "udp_calibration_task", 4 * 1024, NULL, 0, NULL);
+#ifdef CONFIG_RUN_INFERENCE
     xTaskCreate(run_inference_task, "run_inference_task", 4*1024, NULL, 0, NULL);
+#endif
 }

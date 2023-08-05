@@ -55,7 +55,14 @@ menu "CSI Receiver Configuration"
         help
             Minimum interval (in seconds) after which MRC-PCA can be performed again.
 
+    config RUN_INFERENCE
+        bool "Run inference"
+        default true
+        help
+            Whether to run inference.
+
     config START_INFERENCE_AFTER_X_SECONDS
+        depends on RUN_INFERENCE
         int "Start inference after x seconds"
         default 120
         range 0 1000
@@ -63,6 +70,7 @@ menu "CSI Receiver Configuration"
             The interval (in seconds) after which inference (sleep stage classification) is run for the first time.
         
     config RUN_INFERENCE_EVERY_X_SECONDS
+        depends on RUN_INFERENCE
         int "Run inference every x seconds"
         default 120
         range 0 1000
