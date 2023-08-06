@@ -1,8 +1,6 @@
 #include "using_eigen.h"
 #include <eigen3/Eigen/Eigen>
 
-
-// definition in a .cpp file:
 extern "C" float is_first_pc_positive(float *data, int data_length) {
     Eigen::Map<Eigen::MatrixXf> mf(data,data_length,1);
     Eigen::MatrixXf centered = mf.rowwise() - mf.colwise().mean();

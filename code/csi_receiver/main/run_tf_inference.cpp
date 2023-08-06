@@ -5,8 +5,6 @@
 #include "run_tf_inference.h"
 #include "model.h"
 
-#define TF_LITE_STATIC_MEMORY
-
 namespace {
 const tflite::Model* model = nullptr;
 tflite::MicroInterpreter* interpreter = nullptr;
@@ -15,7 +13,7 @@ TfLiteTensor* output = nullptr;
 }
 
 
-void model_setup(){
+extern "C" void model_setup(){
     // load the model and check that its schema is compatible with the version we are using
     model = ::tflite::GetModel(g_model);
     if (model->version() != TFLITE_SCHEMA_VERSION) {
@@ -53,7 +51,7 @@ void model_setup(){
     printf("input type %d, input dims size %d, dims.data[0] %d, dims.data[1] %d", input->type, input->dims->size, input->dims->data[0], input->dims->data[1]);
 }
 
-void run_inference(float* input_values){
+extern "C" int run_inference(float* input_values){
     // set the input values
     for (int i = 0; i < 42; i++) {
         input->data.f[i] = input_values[i];
@@ -66,6 +64,17 @@ void run_inference(float* input_values){
     }
 
     TfLiteTensor* output = interpreter->output(0);
+    
+    // return the result -> max index
+    float current_max = -1;
+    int max_index = 0;
+    for(int i=0; i<6; i++){
+        if(output->data.f[i] > current_max){
+            current_max = output->data.f[i];
+            max_index = i;
+        }
+    }
     printf("input[0] %f, output[0] %f, output[1] %f, output[2] %f, output[3] %f, output[4] %f, output[5] %f\n", input_values[0], output->data.f[1], output->data.f[2], output->data.f[3], output->data.f[4], output->data.f[5]);
-}
 
+    return max_index;
+}

@@ -62,11 +62,8 @@
 #ifdef CONFIG_MRC_PCA_EVERY_X_SECONDS
     #define MRC_PCA_EVERY_X_SECONDS     CONFIG_MRC_PCA_EVERY_X_SECONDS
 #endif
-#ifndef CONFIG_MRC_PCA_EVERY_X_SECONDS
-    #define MRC_PCA_EVERY_X_SECONDS     30
-#endif
 
-#define NUMBER_SUBCARRIERS 52 // we only use LLTF so get 64 subcarriers -TODO: change to usable subcarriers only to save RAM
+#define NUMBER_SUBCARRIERS 52 // we only use LLTF so get 64 subcarriers
 #define MAX_NUMBER_OF_SAMPLES_KEPT  TIME_RANGE_TO_KEEP*CSI_RATE
 
 
@@ -88,7 +85,7 @@ typedef struct
 // defines for UDP broadcast
 #define HOST_IP_ADDR "192.168.4.255" // broadcastp address for the standard AP-network
 #define PORT 8081
-#define BROADCAST_RATE 0.5 // rate in Hz -> every 2 seconds
+#define BROADCAST_RATE 0.5 // rate in Hz -> every 2 seconds  -- probably_removable as logging to udp broadcast exists
 
 
 #define BREATH_LOWER_FREQUENCY_BOUND    0.1
@@ -155,6 +152,8 @@ float t_large_movement = -1;
 float f_presence = -1;
 float f_small_movement = -1;
 float f_large_movement = -1;
+
+int sleep_stage = -1;
 
 bool presence_detected = false;
 bool small_movement_detected = false;
@@ -231,7 +230,8 @@ void run_sleep_stage_classification(){
     model_input[41] = heart_features.fractional_up_stroke_amplitude;
 
     // run inference
-    run_inference(&model_input);
+    sleep_stage = run_inference(&model_input);
+    ESP_LOGI(TAG, "sleep stage classification returned %d", sleep_stage);
 }
 
 static void run_inference_task(){
@@ -244,6 +244,8 @@ static void run_inference_task(){
 }
 #endif
 
+
+// -- probably_removable
 size_t print_sti_to_buffer(char *buffer, size_t len){
     // sti values        
     // if(current_last_element >= current_first_element)
@@ -270,16 +272,19 @@ size_t print_sti_to_buffer(char *buffer, size_t len){
     return len;
 }
 
+// -- probably_removable
 size_t print_heart_rate_to_buffer(char *buffer, size_t len){ //TODO: currently only dummy data
     len += sprintf(buffer + len, "65");
     return len;
 }
 
+// -- probably_removable
 size_t print_breathing_rate_to_buffer(char *buffer, size_t len){ //TODO: currently only dummy data
     len += sprintf(buffer + len, "18");
     return len;
 }
 
+// -- probably_removable
 void setup_broadcast_messages(){
     // define what goes into the udp broadcast messages
     create_function_list(&broadcast_functions, 5);
@@ -294,6 +299,7 @@ void setup_broadcast_messages(){
 
 }
 
+// -- probably_removable
 static void udp_client_task(void *pvParameters)
 {
     int addr_family = 0;
@@ -505,6 +511,7 @@ static void udp_calibration_task(void *pvParameters)
     vTaskDelete(NULL);
 }
 
+// -- probably_removable alhtough it might still be nice for debugging
 static void wifi_event_handler(void* arg, esp_event_base_t event_base,
                                     int32_t event_id, void* event_data)
 {
@@ -522,6 +529,7 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
     }
 }
 
+// -- probably_removable
 void analysis_init(void){
     bandpass_filter_initialize(&breathing_filter, breathing_bandpass_coefficients[0], breathing_bandpass_coefficients[1], NUMBER_COEFFICIENTS);
     bandpass_filter_initialize(&heart_filter, heart_bandpass_coefficients[0], heart_bandpass_coefficients[1], NUMBER_COEFFICIENTS);
@@ -843,7 +851,6 @@ static void csi_data_print_task(void *arg)
 
         // perform MRC-PCA every X seconds
         if(((do_not_run_mrc_on_timer && !ran_mrc_in_the_beginning) || !do_not_run_mrc_on_timer) && timestamp_array[current_last_element]-previous_mrc_pca_timestamp >= MRC_PCA_EVERY_X_SECONDS*SECONDS_TO_MICROSECONDS){
-            // TODO move MRC PCA to only be run once in the beginning and then only after movement
             MRC_scalar_breath = mrc_pca(MRC_ratios_breath, amplitude_array, MAX_NUMBER_OF_SAMPLES_KEPT, current_last_element, fft_count, BREATH_LOWER_FREQUENCY_BOUND, BREATH_UPPER_FREQUENCY_BOUND, breathing_bandpass_coefficients[0], breathing_bandpass_coefficients[1]);
             MRC_scalar_heart = mrc_pca(MRC_ratios_heart, amplitude_array, MAX_NUMBER_OF_SAMPLES_KEPT, current_last_element, fft_count, HEART_LOWER_FREQUENCY_BOUND, HEART_UPPER_FREQUENCY_BOUND, heart_bandpass_coefficients[0], heart_bandpass_coefficients[1]);
             previous_mrc_pca_timestamp = timestamp_array[current_last_element];
@@ -2104,8 +2111,6 @@ void wifi_init_softap(void)
     ESP_LOGI(TAG, "wifi_init_softap finished. SSID:%s password:%s channel:%d",
              EXAMPLE_ESP_WIFI_SSID, EXAMPLE_ESP_WIFI_PASS, EXAMPLE_ESP_WIFI_CHANNEL);
 
-    // set to promiscuous mode to use as sniffer and get more CSI from unconnected devices
-    //ESP_ERROR_CHECK(esp_wifi_set_promiscuous(true));
     ESP_ERROR_CHECK(esp_wifi_set_csi_rx_cb(csi_callback, NULL));
 
     // enable CSI collection
@@ -2269,11 +2274,10 @@ void app_main(void)
     model_setup();
     ESP_LOGI(TAG, "completed model setup");
 
+    // run inference with dummy data so that potential errors show up directly after starting
     float input_array[] = {1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0};
-
-    //run_inference(&input_array);
     run_inference(&input_array);
-    ESP_LOGI(TAG, "ran inferences");
+    ESP_LOGI(TAG, "ran dummy inference");
 #endif
 
     g_csi_info_queue = xQueueCreate(256, sizeof(void *));
