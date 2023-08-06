@@ -219,13 +219,21 @@ menu "CSI Receiver Configuration"
                 bool "print heart poi"
                 default true
                 help
-                    Whether to print the whether a new POI (peak/valley) was detected in the filtered heart signal and the POI's attributes to a file on the SD card (and other outputs if different logging is not enabled).
+                    Whether to print whether a new POI (peak/valley) was detected in the filtered heart signal and the POI's attributes to a file on the SD card (and other outputs if different logging is not enabled).
             
             config SENSE_PRINT_BREATHING_POI_SD
                 bool "print breathing poi"
                 default true
                 help
-                    Whether to print the whether a new POI (peak/valley) was detected in the filtered breathing signal and the POI's attributes to a file on the SD card (and other outputs if different logging is not enabled).
+                    Whether to print whether a new POI (peak/valley) was detected in the filtered breathing signal and the POI's attributes to a file on the SD card (and other outputs if different logging is not enabled).
+        
+            config SENSE_PRINT_SLEEP_STAGE_CLASSIFICATION_SD
+                depends on RUN_INFERENCE
+                bool "print sleep stage classification"
+                default true
+                help
+                    Whether to print the result of the classification to a file on the SD card (and other outputs if different logging is not enabled).
+    
         endmenu
         
         menu "Features to log to serial"
@@ -295,13 +303,20 @@ menu "CSI Receiver Configuration"
                 bool "print heart poi"
                 default true
                 help
-                    Whether to print the whether a new POI (peak/valley) was detected in the filtered heart signal and the POI's attributes to serial.
+                    Whether to print whether a new POI (peak/valley) was detected in the filtered heart signal and the POI's attributes to serial.
             
             config SENSE_PRINT_BREATHING_POI_S
                 bool "print breathing poi"
                 default true
                 help
-                    Whether to print the whether a new POI (peak/valley) was detected in the filtered breathing signal and the POI's attributes to serial.
+                    Whether to print whether a new POI (peak/valley) was detected in the filtered breathing signal and the POI's attributes to serial.
+            
+            config SENSE_PRINT_SLEEP_STAGE_CLASSIFICATION_S
+                depends on RUN_INFERENCE
+                bool "print sleep stage classification"
+                default true
+                help
+                    Whether to print the result of the classification to serial.
     
         endmenu
 
@@ -372,14 +387,20 @@ menu "CSI Receiver Configuration"
                 bool "print heart poi"
                 default true
                 help
-                    Whether to print the whether a new POI (peak/valley) was detected in the filtered heart signal and the POI's attributes to UDP broadcast.
+                    Whether to print whether a new POI (peak/valley) was detected in the filtered heart signal and the POI's attributes to UDP broadcast.
             
             config SENSE_PRINT_BREATHING_POI_U
                 bool "print breathing poi"
                 default true
                 help
-                    Whether to print the whether a new POI (peak/valley) was detected in the filtered breathing signal and the POI's attributes to UDP broadcast.
+                    Whether to print whether a new POI (peak/valley) was detected in the filtered breathing signal and the POI's attributes to UDP broadcast.
     
+            config SENSE_PRINT_SLEEP_STAGE_CLASSIFICATION_U
+                depends on RUN_INFERENCE
+                bool "print sleep stage classification"
+                default true
+                help
+                    Whether to print the result of the classification to UDP broadcast.        
         endmenu
         
     endmenu

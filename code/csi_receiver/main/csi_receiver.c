@@ -1450,6 +1450,10 @@ static void csi_data_print_task(void *arg)
 #ifdef CONFIG_SENSE_PRINT_THRESHOLDS_SD
             len += sprintf(buffer + len, ",threshold_presence,f_presence,threshold_small_movement,f_small_movement,threshold_large_movement,f_large_movement");
 #endif
+
+#ifdef CONFIG_SENSE_PRINT_SLEEP_STAGE_CLASSIFICATION_SD
+            len += sprintf(buffer + len, ",sleep_stage_classification");
+#endif
             
             len += sprintf(buffer + len, ",sequence,timestamp,source_mac,first_word_invalid,len,rssi,rate,sig_mode,mcs,bandwidth,smoothing,not_sounding,aggregation,stbc,fec_coding,sgi,noise_floor,ampdu_cnt,channel,secondary_channel,local_timestamp,ant,sig_len,rx_state");
 #ifdef CONFIG_SENSE_PRINT_CSI_SD   
@@ -1516,6 +1520,10 @@ static void csi_data_print_task(void *arg)
 
 #ifdef CONFIG_SENSE_PRINT_THRESHOLDS_SD
             len += sprintf(buffer + len, ",%f,%f,%f,%f,%f,%f", t_presence, f_presence, t_small_movement, f_small_movement, t_large_movement, f_large_movement);
+#endif
+
+#ifdef CONFIG_SENSE_PRINT_SLEEP_STAGE_CLASSIFICATION_SD
+            len += sprintf(buffer + len, ",%d", sleep_stage);
 #endif
 
         len += sprintf(buffer + len, ",%d,%u," MACSTR ",%d,%d,%d,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%d,%u,%u,%u,%u,%u,%u,%u",
@@ -1636,6 +1644,10 @@ static void csi_data_print_task(void *arg)
             len += sprintf(buffer + len, ",threshold_presence,f_presence,threshold_small_movement,f_small_movement,threshold_large_movement,f_large_movement");
 #endif
 
+#ifdef CONFIG_SENSE_PRINT_SLEEP_STAGE_CLASSIFICATION_SD
+            len += sprintf(buffer + len, ",sleep_stage_classification");
+#endif
+
             len += sprintf(buffer + len, ",sequence,timestamp,source_mac,first_word_invalid,len,rssi,rate,sig_mode,mcs,bandwidth,smoothing,not_sounding,aggregation,stbc,fec_coding,sgi,noise_floor,ampdu_cnt,channel,secondary_channel,local_timestamp,ant,sig_len,rx_state");
 
 #ifdef CONFIG_SENSE_PRINT_CSI_SD   
@@ -1702,6 +1714,10 @@ static void csi_data_print_task(void *arg)
 
 #ifdef CONFIG_SENSE_PRINT_THRESHOLDS_SD
             len += sprintf(buffer + len, ",%f,%f,%f,%f,%f,%f", t_presence, f_presence, t_small_movement, f_small_movement, t_large_movement, f_large_movement);
+#endif
+
+#ifdef CONFIG_SENSE_PRINT_SLEEP_STAGE_CLASSIFICATION_SD
+            len += sprintf(buffer + len, ",%d", sleep_stage);
 #endif
 
         len += sprintf(buffer + len, ",%d,%u," MACSTR ",%d,%d,%d,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%d,%u,%u,%u,%u,%u,%u,%u",
@@ -1797,6 +1813,10 @@ static void csi_data_print_task(void *arg)
             len1 += sprintf(buffer + len1, ",threshold_presence,f_presence,threshold_small_movement,f_small_movement,threshold_large_movement,f_large_movement");
 #endif
 
+#ifdef CONFIG_SENSE_PRINT_SLEEP_STAGE_CLASSIFICATION_S
+            len1 += sprintf(buffer + len1, ",sleep_stage_classification");
+#endif
+
             len1 += sprintf(buffer + len1, ",sequence,timestamp,source_mac,first_word_invalid,len,rssi,rate,sig_mode,mcs,bandwidth,smoothing,not_sounding,aggregation,stbc,fec_coding,sgi,noise_floor,ampdu_cnt,channel,secondary_channel,local_timestamp,ant,sig_len,rx_state");
 #ifdef CONFIG_SENSE_PRINT_CSI_S   
             len1 += sprintf(buffer + len1, ",data");
@@ -1863,6 +1883,10 @@ static void csi_data_print_task(void *arg)
 
 #ifdef CONFIG_SENSE_PRINT_THRESHOLDS_S
             len1 += sprintf(buffer + len1, ",%f,%f,%f,%f,%f,%f", t_presence, f_presence, t_small_movement, f_small_movement, t_large_movement, f_large_movement);
+#endif
+
+#ifdef CONFIG_SENSE_PRINT_SLEEP_STAGE_CLASSIFICATION_S
+            len1 += sprintf(buffer + len1, ",%d", sleep_stage);
 #endif
 
         len1 += sprintf(buffer + len1, ",%d,%u," MACSTR ",%d,%d,%d,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%d,%u,%u,%u,%u,%u,%u,%u",
@@ -1940,6 +1964,10 @@ static void csi_data_print_task(void *arg)
             len2 += sprintf(buffer + len2, ",threshold_presence,f_presence,threshold_small_movement,f_small_movement,threshold_large_movement,f_large_movement");
 #endif
 
+#ifdef CONFIG_SENSE_PRINT_SLEEP_STAGE_CLASSIFICATION_U
+            len2 += sprintf(buffer + len2, ",sleep_stage_classification");
+#endif
+
             len2 += sprintf(buffer + len2, ",sequence,timestamp,source_mac,first_word_invalid,len,rssi,rate,sig_mode,mcs,bandwidth,smoothing,not_sounding,aggregation,stbc,fec_coding,sgi,noise_floor,ampdu_cnt,channel,secondary_channel,local_timestamp,ant,sig_len,rx_state");
 #ifdef CONFIG_SENSE_PRINT_CSI_U   
             len2 += sprintf(buffer + len2, ",data");
@@ -2001,6 +2029,10 @@ static void csi_data_print_task(void *arg)
 
 #ifdef CONFIG_SENSE_PRINT_THRESHOLDS_U
             len2 += sprintf(buffer + len2, ",%f,%f,%f,%f,%f,%f", t_presence, f_presence, t_small_movement, f_small_movement, t_large_movement, f_large_movement);
+#endif
+
+#ifdef CONFIG_SENSE_PRINT_SLEEP_STAGE_CLASSIFICATION_U
+            len2 += sprintf(buffer + len2, ",%d", sleep_stage);
 #endif
 
         len2 += sprintf(buffer + len2, ",%d,%u," MACSTR ",%d,%d,%d,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%d,%u,%u,%u,%u,%u,%u,%u",
