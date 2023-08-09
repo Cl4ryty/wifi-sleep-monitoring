@@ -5,6 +5,7 @@
 #include "esp_err.h"
 #include "esp_log.h"
 #include "nvs_flash.h"
+#include "driver/gpio.h"
 
 #include "esp_vfs_fat.h"
 #include "sdmmc_cmd.h"
@@ -18,6 +19,8 @@
 
 // constants
 #define SECONDS_TO_MICROSECONDS 1000000
+
+#define GPIO_INPUT_PIN 0
 
 
 /* This project uses configuration options that can be set via project configuration menu.
@@ -74,6 +77,7 @@ uint8_t csi_sender_mac[] = {0x0a, 0x0a, 0x0a, 0x0a, 0x0a, 0x0a};
 static const char *TAG = "csi receiver"; 
 static QueueHandle_t g_csi_info_queue = NULL;
 static QueueHandle_t buffer_queue = NULL;
+static QueueHandle_t gpio_evt_queue = NULL;
 
 typedef struct
 {
@@ -162,6 +166,8 @@ bool large_movement_detected = false;
 bool presence_detected_previously = false;
 bool large_movement_detected_previously = false;
 bool ran_mrc_in_the_beginning = false;
+
+bool button_pressed = false;
 
 #ifdef CONFIG_MRC_PCA_ON_TIMER
     bool do_not_run_mrc_on_timer = false;
@@ -682,7 +688,7 @@ float fft_rate_estimation(float *data, int data_length, int data_current_last_in
 }
 
 
-static void csi_data_print_task(void *arg)
+static void csi_processing_task(void *arg)
 {
     wifi_csi_info_t *info = NULL;
 
@@ -881,7 +887,7 @@ static void csi_data_print_task(void *arg)
         int peak_index_difference_from_last_intercept = 0;
         int valley_index_difference_from_last_intercept = 0;
 
-        unsigned MAC_window_size = T_breath * SECONDS_TO_MICROSECONDS; // calculate from T -> timestamps are in microseconds
+        unsigned MAC_window_size = 2 * T_breath * SECONDS_TO_MICROSECONDS; // calculate from T -> timestamps are in microseconds
         unsigned window_size = TIME_RANGE_TO_KEEP * SECONDS_TO_MICROSECONDS;
 
         // update the MAC
@@ -955,7 +961,7 @@ static void csi_data_print_task(void *arg)
                             }
 
                             // check whether the amplitude is large enough
-                            if(false && MAC_breath.mean_peak_to_valley_amplitude.current_number_of_elements > 20 && breath_cycle_amplitude <= MAC_breath.mean_peak_to_valley_amplitude.current_mean * 0.8){
+                            if(MAC_breath.mean_peak_to_valley_amplitude.current_number_of_elements > 20 && breath_cycle_amplitude <= MAC_breath.mean_peak_to_valley_amplitude.current_mean * 0.2){
                                 // is too small, discard the newly found intercept and valley
                                 ESP_LOGE(TAG, "ampliude not large enough");
                             }
@@ -1065,7 +1071,7 @@ static void csi_data_print_task(void *arg)
 
 
                             // check whether the amplitude is large enough - but only if enough amplitudes have been added yet, otherwise if the first amplitude is an outlier no further ones will be added
-                            if(false && MAC_breath.mean_peak_to_valley_amplitude.current_number_of_elements > 20 && breath_cycle_amplitude <= MAC_breath.mean_peak_to_valley_amplitude.current_mean * 0.8){
+                            if(MAC_breath.mean_peak_to_valley_amplitude.current_number_of_elements > 20 && breath_cycle_amplitude <= MAC_breath.mean_peak_to_valley_amplitude.current_mean * 0.2){
                                 // is too small, discard the newly found intercept and peak
                                 ESP_LOGE(TAG, "amplitude not large enough");
                             }
@@ -1144,7 +1150,7 @@ static void csi_data_print_task(void *arg)
         peak_index_difference_from_last_intercept = 0;
         valley_index_difference_from_last_intercept = 0;
 
-        MAC_window_size = T_heart * SECONDS_TO_MICROSECONDS; // calculate from T -> timestamps are in microseconds
+        MAC_window_size = 2 * T_heart * SECONDS_TO_MICROSECONDS; // calculate from T -> timestamps are in microseconds
         // update the MAC
         // use the filtered amplitude for the MAC
         if(first_run){
@@ -1217,7 +1223,7 @@ static void csi_data_print_task(void *arg)
                             }
 
                             // check whether the amplitude is large enough
-                            if(false && MAC_heart.mean_peak_to_valley_amplitude.current_number_of_elements > 20 && heart_cycle_amplitude <= MAC_heart.mean_peak_to_valley_amplitude.current_mean * 0.8){
+                            if(MAC_heart.mean_peak_to_valley_amplitude.current_number_of_elements > 20 && heart_cycle_amplitude <= MAC_heart.mean_peak_to_valley_amplitude.current_mean * 0.2){
                                 // is too small, discard the newly found intercept and valley
                                 ESP_LOGE(TAG, "ampliude not large enough");
                             }
@@ -1328,7 +1334,7 @@ static void csi_data_print_task(void *arg)
                             }
 
                             // check whether the amplitude is large enough - but only if enough amplitudes have been added yet, otherwise if the first amplitude is an outlier no further ones will be added
-                            if(false && MAC_heart.mean_peak_to_valley_amplitude.current_number_of_elements > 20 && heart_cycle_amplitude <= MAC_heart.mean_peak_to_valley_amplitude.current_mean * 0.8){
+                            if(MAC_heart.mean_peak_to_valley_amplitude.current_number_of_elements > 20 && heart_cycle_amplitude <= MAC_heart.mean_peak_to_valley_amplitude.current_mean * 0.2){
                                 // is too small, discard the newly found intercept and peak
                                 ESP_LOGE(TAG, "amplitude not large enough");
                             }
@@ -1454,7 +1460,7 @@ static void csi_data_print_task(void *arg)
 #ifdef CONFIG_SENSE_PRINT_SLEEP_STAGE_CLASSIFICATION_SD
             len += sprintf(buffer + len, ",sleep_stage_classification");
 #endif
-            
+            len += sprintf(buffer + len, ",button_pressed");
             len += sprintf(buffer + len, ",sequence,timestamp,source_mac,first_word_invalid,len,rssi,rate,sig_mode,mcs,bandwidth,smoothing,not_sounding,aggregation,stbc,fec_coding,sgi,noise_floor,ampdu_cnt,channel,secondary_channel,local_timestamp,ant,sig_len,rx_state");
 #ifdef CONFIG_SENSE_PRINT_CSI_SD   
             len += sprintf(buffer + len, ",data");
@@ -1526,6 +1532,7 @@ static void csi_data_print_task(void *arg)
             len += sprintf(buffer + len, ",%d", sleep_stage);
 #endif
 
+        len += sprintf(buffer + len, ",%d", button_pressed);
         len += sprintf(buffer + len, ",%d,%u," MACSTR ",%d,%d,%d,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%d,%u,%u,%u,%u,%u,%u,%u",
                     count, esp_log_timestamp(),
                     MAC2STR(info->mac), info->first_word_invalid, info->len, rx_ctrl->rssi, rx_ctrl->rate, rx_ctrl->sig_mode,
@@ -1648,6 +1655,8 @@ static void csi_data_print_task(void *arg)
             len += sprintf(buffer + len, ",sleep_stage_classification");
 #endif
 
+            len += sprintf(buffer + len, ",button_pressed");
+
             len += sprintf(buffer + len, ",sequence,timestamp,source_mac,first_word_invalid,len,rssi,rate,sig_mode,mcs,bandwidth,smoothing,not_sounding,aggregation,stbc,fec_coding,sgi,noise_floor,ampdu_cnt,channel,secondary_channel,local_timestamp,ant,sig_len,rx_state");
 
 #ifdef CONFIG_SENSE_PRINT_CSI_SD   
@@ -1720,6 +1729,7 @@ static void csi_data_print_task(void *arg)
             len += sprintf(buffer + len, ",%d", sleep_stage);
 #endif
 
+        len += sprintf(buffer + len, ",%d", button_pressed);
         len += sprintf(buffer + len, ",%d,%u," MACSTR ",%d,%d,%d,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%d,%u,%u,%u,%u,%u,%u,%u",
                     count, esp_log_timestamp(),
                     MAC2STR(info->mac), info->first_word_invalid, info->len, rx_ctrl->rssi, rx_ctrl->rate, rx_ctrl->sig_mode,
@@ -2064,7 +2074,7 @@ static void csi_data_print_task(void *arg)
             free(q_data);
         }
 #endif
-        
+        button_pressed = false;
         count++;
         free(info);
     }
@@ -2215,6 +2225,23 @@ void wifi_init_softap(void)
 }
 #endif
 
+static void IRAM_ATTR gpio_isr_handler(void* arg)
+{
+    uint32_t gpio_num = (uint32_t) arg;
+    xQueueSendFromISR(gpio_evt_queue, &gpio_num, NULL);
+}
+
+static void gpio_task_example(void* arg)
+{
+    uint32_t io_num;
+    for(;;) {
+        if(xQueueReceive(gpio_evt_queue, &io_num, portMAX_DELAY)) {
+            printf("GPIO[%"PRIu32"] intr, val: %d\n", io_num, gpio_get_level(io_num));
+            button_pressed = true;
+        }
+    }
+}
+
 void app_main(void)
 {
     //Initialize NVS
@@ -2224,6 +2251,21 @@ void app_main(void)
       ret = nvs_flash_init();
     }
     ESP_ERROR_CHECK(ret);
+
+    // initialize gpio for interrupt
+    gpio_config_t io_conf = {};
+    io_conf.intr_type = GPIO_INTR_NEGEDGE;
+    io_conf.pin_bit_mask = (1ULL << GPIO_INPUT_PIN);
+    io_conf.mode = GPIO_MODE_INPUT;
+    io_conf.pull_up_en = 1;
+    gpio_config(&io_conf);
+    gpio_install_isr_service(0);
+    gpio_isr_handler_add(GPIO_INPUT_PIN, gpio_isr_handler, (void*) GPIO_INPUT_PIN);
+
+    gpio_evt_queue = xQueueCreate(10, sizeof(uint32_t));
+    //start gpio task
+    xTaskCreate(gpio_task_example, "gpio_task_example", 2048, NULL, 10, NULL);
+
 
     // open nvs to restore threshold values
     esp_err_t err = nvs_open("storage", NVS_READWRITE, &my_handle);
@@ -2314,7 +2356,7 @@ void app_main(void)
 
     g_csi_info_queue = xQueueCreate(256, sizeof(void *));
     buffer_queue = xQueueCreate(2048, sizeof(void *));
-    xTaskCreate(csi_data_print_task, "csi_data_print", 8 * 1024, NULL, 0, NULL);
+    xTaskCreate(csi_processing_task, "csi_data_print", 8 * 1024, NULL, 0, NULL);
     xTaskCreate(udp_client_task, "udp_client_task", 4 * 1024, NULL, 0, NULL);
     xTaskCreate(udp_calibration_task, "udp_calibration_task", 4 * 1024, NULL, 0, NULL);
 #ifdef CONFIG_RUN_INFERENCE
