@@ -62,6 +62,8 @@
 #define TIME_RANGE_TO_KEEP          CONFIG_TIME_RANGE_TO_KEEP // in seconds
 #define FFT_EVERY_X_SECONDS         CONFIG_FFT_EVERY_X_SECONDS
 
+
+#define MRC_PCA_EVERY_X_SECONDS 30
 #ifdef CONFIG_MRC_PCA_EVERY_X_SECONDS
     #define MRC_PCA_EVERY_X_SECONDS     CONFIG_MRC_PCA_EVERY_X_SECONDS
 #endif
@@ -87,7 +89,7 @@ typedef struct
 
 
 // defines for UDP broadcast
-#define HOST_IP_ADDR "192.168.4.255" // broadcastp address for the standard AP-network
+#define HOST_IP_ADDR "192.168.4.255" // broadcast address for the standard AP-network
 #define PORT 8081
 #define BROADCAST_RATE 0.5 // rate in Hz -> every 2 seconds  -- probably_removable as logging to udp broadcast exists
 
@@ -381,6 +383,8 @@ static void udp_client_task(void *pvParameters)
 static void udp_calibration_task(void *pvParameters)
 {
     char rx_buffer[128];
+    char *buffer = malloc_or_die(1024);
+    size_t length = 0;
     char host_ip[] = HOST_IP_ADDR;
     int addr_family = 0;
     int ip_protocol = 0;
@@ -415,6 +419,8 @@ static void udp_calibration_task(void *pvParameters)
 
             struct sockaddr_storage source_addr; // Large enough for both IPv4 or IPv6
             socklen_t socklen = sizeof(source_addr);
+            //int len = recvfrom(sock, rx_buffer, sizeof(rx_buffer) - 1, 0, (struct sockaddr *)&dest_addr, &socklen);
+
             int len = recvfrom(sock, rx_buffer, sizeof(rx_buffer) - 1, 0, (struct sockaddr *)&source_addr, &socklen);
 
             // Error occurred during receiving
@@ -437,45 +443,75 @@ static void udp_calibration_task(void *pvParameters)
 
                 if (strncmp(rx_buffer, "-2", 2) == 0) {
                     ESP_LOGI(TAG, "Stopping calibration");
-                    running_calibration = false;
-                    t_presence = -1;
-                    t_small_movement = -1;
-                    t_large_movement = -1;
-                    f_presence = -1;
-                    f_small_movement = -1;
-                    f_large_movement = -1;
-                    get_best_thresholds(sti_list.list, id_list.list, sti_list.elements, &t_presence, &t_small_movement, &t_large_movement, &f_presence, &f_small_movement, &f_large_movement);
-                    ESP_LOGI(TAG, "got thresholds %f, %f, %f", t_presence, t_small_movement, t_large_movement);
-                    free_list_char(&id_list);
-                    free_list_float(&sti_list);
+                    if(running_calibration){
+                        running_calibration = false;
+                        t_presence = -1;
+                        t_small_movement = -1;
+                        t_large_movement = -1;
+                        f_presence = -1;
+                        f_small_movement = -1;
+                        f_large_movement = -1;
+                        get_best_thresholds(sti_list.list, id_list.list, sti_list.elements, &t_presence, &t_small_movement, &t_large_movement, &f_presence, &f_small_movement, &f_large_movement);
+                        ESP_LOGI(TAG, "got thresholds %f, %f, %f", t_presence, t_small_movement, t_large_movement);
+                        free_list_char(&id_list);
+                        free_list_float(&sti_list);
 
-                    // Write threshold values to NVS
+                        // send broadcast message with the new thresholds
+                        length = 0;
+                        length += sprintf(buffer + length, "thres_pres %f, thres_s_mov %f, thresh_l_mov %f", t_presence, t_small_movement, t_large_movement);
+                        
+                        BufferObject *q_data = malloc_or_die(len + sizeof(size_t));
+                        q_data->length = length;
+                        q_data->buffer = malloc_or_die(length);
+                        memcpy(q_data->buffer, buffer, length);
 
-                    uint32_t int_t_presence = 0;
-                    uint32_t int_t_small_movement = 0;
-                    uint32_t int_t_large_movement = 0;
-                    memcpy(&int_t_presence, &t_presence, sizeof(uint32_t));
-                    memcpy(&int_t_small_movement, &t_small_movement, sizeof(uint32_t));
-                    memcpy(&int_t_large_movement, &t_large_movement, sizeof(uint32_t));
+                        if (!buffer_queue || xQueueSend(buffer_queue, &q_data, 0) == pdFALSE) {
+                            ESP_LOGW(TAG, "buffer_queue full");
+                            free(q_data);
+                        }
 
-                    ESP_LOGI(TAG, "Updating restart counter in NVS ... ");
-                    esp_err_t err = nvs_set_u32(my_handle, "thresh_pres", int_t_presence);
-                    if(err != ESP_OK){
-                        ESP_LOGW(TAG, "failed");
-                    }
-                    err = nvs_set_u32(my_handle, "thresh_s_mov", int_t_small_movement);
-                    if(err != ESP_OK){
-                        ESP_LOGW(TAG, "failed");
-                    }                    err = nvs_set_u32(my_handle, "thresh_l_mov", int_t_large_movement);
-                    if(err != ESP_OK){
-                        ESP_LOGW(TAG, "failed");
-                    }
+                        // Write threshold values to NVS
+                        uint32_t int_t_presence = 0;
+                        uint32_t int_t_small_movement = 0;
+                        uint32_t int_t_large_movement = 0;
+                        memcpy(&int_t_presence, &t_presence, sizeof(uint32_t));
+                        memcpy(&int_t_small_movement, &t_small_movement, sizeof(uint32_t));
+                        memcpy(&int_t_large_movement, &t_large_movement, sizeof(uint32_t));
 
-                    // Commit written values
-                    ESP_LOGI(TAG, "Committing updates in NVS ... ");
-                    err = nvs_commit(my_handle);
-                    if(err != ESP_OK){
-                        ESP_LOGW(TAG, "failed");
+                        ESP_LOGI(TAG, "Updating threshold values in NVS ... ");
+                        esp_err_t err = nvs_set_u32(my_handle, "thresh_pres", int_t_presence);
+                        if(err != ESP_OK){
+                            ESP_LOGW(TAG, "failed");
+                        }
+                        err = nvs_set_u32(my_handle, "thresh_s_mov", int_t_small_movement);
+                        if(err != ESP_OK){
+                            ESP_LOGW(TAG, "failed");
+                        }                    err = nvs_set_u32(my_handle, "thresh_l_mov", int_t_large_movement);
+                        if(err != ESP_OK){
+                            ESP_LOGW(TAG, "failed");
+                        }
+
+                        // Commit written values
+                        ESP_LOGI(TAG, "Committing updates in NVS ... ");
+                        err = nvs_commit(my_handle);
+                        if(err != ESP_OK){
+                            ESP_LOGW(TAG, "failed");
+                        }
+                    }else{
+                        ESP_LOGI(TAG, "Calibration was not running");
+                        // send broadcast message with the new thresholds
+                        length = 0;
+                        length += sprintf(buffer + length, "Calibration was not running, keeping current thresholds: thres_pres %f, thres_s_mov %f, thresh_l_mov %f\n", t_presence, t_small_movement, t_large_movement);
+                        
+                        BufferObject *q_data = malloc_or_die(len + sizeof(size_t));
+                        q_data->length = length;
+                        q_data->buffer = malloc_or_die(length);
+                        memcpy(q_data->buffer, buffer, length);
+
+                        if (!buffer_queue || xQueueSend(buffer_queue, &q_data, 0) == pdFALSE) {
+                            ESP_LOGW(TAG, "buffer_queue full");
+                            free(q_data);
+                        }
                     }
                 }
 
@@ -2343,6 +2379,7 @@ void app_main(void)
 
     // setup_broadcast_messages();
     analysis_init();
+    ESP_LOGI(TAG, "before model setup");
 
 #ifdef CONFIG_RUN_INFERENCE
     model_setup();
@@ -2362,4 +2399,5 @@ void app_main(void)
 #ifdef CONFIG_RUN_INFERENCE
     xTaskCreate(run_inference_task, "run_inference_task", 4*1024, NULL, 0, NULL);
 #endif
+    ESP_LOGI(TAG, "completed main");
 }

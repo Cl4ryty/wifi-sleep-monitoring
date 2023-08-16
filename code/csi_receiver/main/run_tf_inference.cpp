@@ -10,6 +10,10 @@ const tflite::Model* model = nullptr;
 tflite::MicroInterpreter* interpreter = nullptr;
 TfLiteTensor* input = nullptr;
 TfLiteTensor* output = nullptr;
+
+// allocate memory for tensorflow (statically)
+const int tensor_arena_size = 8 * 1024;
+uint8_t tensor_arena[tensor_arena_size];
 }
 
 
@@ -30,9 +34,7 @@ extern "C" void model_setup(){
         return;
     }
 
-    // allocate memory for tensorflow (statically)
-    const int tensor_arena_size = 8 * 1024;
-    uint8_t tensor_arena[tensor_arena_size];
+
 
     static tflite::MicroInterpreter static_interpreter(model, resolver, tensor_arena, tensor_arena_size);
     interpreter = &static_interpreter;
@@ -48,20 +50,23 @@ extern "C" void model_setup(){
     input = interpreter->input(0);
     output = interpreter->output(0);
     
-    printf("input type %d, input dims size %d, dims.data[0] %d, dims.data[1] %d", input->type, input->dims->size, input->dims->data[0], input->dims->data[1]);
+    printf("input type %d, input dims size %d, dims.data[0] %d, dims.data[1] %d\n", input->type, input->dims->size, input->dims->data[0], input->dims->data[1]);
 }
 
 extern "C" int run_inference(float* input_values){
+    printf("starting inference\n");
     // set the input values
     for (int i = 0; i < 42; i++) {
         input->data.f[i] = input_values[i];
     }
+    printf("set inputs, invoking now\n");
 
     // run the model
     TfLiteStatus invoke_status = interpreter->Invoke();
     if (invoke_status != kTfLiteOk) {
         printf("Invoke failed\n");
     }
+    printf("Invoke done, getting outputs\n");
 
     TfLiteTensor* output = interpreter->output(0);
     
