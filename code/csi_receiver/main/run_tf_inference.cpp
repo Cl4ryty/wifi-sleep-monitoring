@@ -12,7 +12,7 @@ TfLiteTensor* input = nullptr;
 TfLiteTensor* output = nullptr;
 
 // allocate memory for tensorflow (statically)
-const int tensor_arena_size = 8 * 1024;
+const int tensor_arena_size = 20 * 1024;
 uint8_t tensor_arena[tensor_arena_size];
 }
 
