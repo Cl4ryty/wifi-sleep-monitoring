@@ -33,8 +33,7 @@
 #define EXAMPLE_ESP_WIFI_CHANNEL            CONFIG_ESP_WIFI_CHANNEL
 #define EXAMPLE_MAX_STA_CONN                CONFIG_ESP_MAX_STA_CONN
 
-
-#ifdef CONFIG_SENSE_LOG_TO_SD
+#if defined(CONFIG_SENSE_LOG_TO_SD) || defined(CONFIG_PROCESS_CSI_FROM_FILE)
     // defines for using the sd card
     #define MOUNT_POINT "/sdcard"
 
@@ -2203,6 +2202,113 @@ static void csi_callback(void *ctx, wifi_csi_info_t *info)
     }
 }
 
+
+static void csi_from_file_task()
+{
+
+    // the file has to be in the correct format
+    FILE *file;
+    const char *file_name = MOUNT_POINT"/csi_p.csv";
+    file = fopen(file_name, "r");
+    if(file==NULL){
+        ESP_LOGE(TAG, "file to process could not be loaded");
+        vTaskDelete(NULL);
+    }
+
+    // read line by line
+    char line[1024];
+
+    char *buffer_string = malloc_or_die(8 * 1024);
+
+    // get the first line and skip it
+    fgets(line, 1024, file);
+
+    while(fgets(line, 1024, file)){
+        wifi_csi_info_t info;
+        wifi_pkt_rx_ctrl_t *ctrl = malloc_or_die(sizeof(wifi_pkt_rx_ctrl_t));
+        info.rx_ctrl = *ctrl;
+
+        // separate by commas
+        memcpy(&info.dmac, &customBaseMAC, 6);
+
+        int rssi_temp, rate_temp, sig_mode_temp, mcs_temp, cwb_temp, smoothing_temp, not_sounding_temp;
+        int aggregation_temp, stbc_temp, fec_coding_temp, sgi_temp, noise_floor_temp, ampdu_cnt_temp;
+        int channel_temp, secondary_channel_temp, timestamp_temp, ant_temp, sig_len_temp, rx_state_temp;
+
+        int count = sscanf(line, "%*20[^,],%*d,%*d,%*u,%2" SCNx8 ":%2" SCNx8 ":%2" SCNx8 ":%2" SCNx8 ":%2" SCNx8 ":%2" SCNx8 ",%d,%d,%d,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%d,%u,%u,%u,%u,%u,%u,%u,%s",
+                       &info.mac[0], &info.mac[1], &info.mac[2], &info.mac[3], &info.mac[4], &info.mac[5],
+                       &info.first_word_invalid, &info.len,
+                       &rssi_temp, &rate_temp, &sig_mode_temp, &mcs_temp, &cwb_temp, &smoothing_temp,
+                       &not_sounding_temp, &aggregation_temp, &stbc_temp, &fec_coding_temp, &sgi_temp,
+                       &noise_floor_temp, &ampdu_cnt_temp, &channel_temp, &secondary_channel_temp,
+                       &timestamp_temp, &ant_temp, &sig_len_temp, &rx_state_temp, buffer_string);
+
+
+        info.rx_ctrl.rssi = (unsigned int)rssi_temp;
+        info.rx_ctrl.rate = (unsigned int)rate_temp;
+        info.rx_ctrl.sig_mode = (unsigned int)sig_mode_temp;
+        info.rx_ctrl.mcs = (unsigned int)mcs_temp;
+        info.rx_ctrl.cwb = (unsigned int)cwb_temp;
+        info.rx_ctrl.smoothing = (unsigned int)smoothing_temp;
+        info.rx_ctrl.not_sounding = (unsigned int)not_sounding_temp;
+        info.rx_ctrl.aggregation = (unsigned int)aggregation_temp;
+        info.rx_ctrl.stbc = (unsigned int)stbc_temp;
+        info.rx_ctrl.fec_coding = (unsigned int)fec_coding_temp;
+        info.rx_ctrl.sgi = (unsigned int)sgi_temp;
+        info.rx_ctrl.noise_floor = (unsigned int)noise_floor_temp;
+        info.rx_ctrl.ampdu_cnt = (unsigned int)ampdu_cnt_temp;
+        info.rx_ctrl.channel = (unsigned int)channel_temp;
+        info.rx_ctrl.secondary_channel = (unsigned int)secondary_channel_temp;
+        info.rx_ctrl.timestamp = (unsigned int)timestamp_temp;
+        info.rx_ctrl.ant = (unsigned int)ant_temp;
+        info.rx_ctrl.sig_len = (unsigned int)sig_len_temp;
+        info.rx_ctrl.rx_state = (unsigned int)rx_state_temp;
+
+        info.buf = malloc_or_die(info.len);
+        int bufIndex = 0;
+
+        // Tokenize the input string, deal with brackets
+        char *token = strtok((char *)buffer_string, ",");
+        while (token != NULL) {
+            if (token[strlen(token) - 1] == ']') {
+                token[strlen(token) - 1] = '\0';
+            }else if (token[strlen(token) - 1] == '[') {
+                token[strlen(token) - 1] = '\0';
+            }
+
+            // Convert the token to an integer
+            int8_t value = (int8_t)strtol(token, NULL, 10);
+            info.buf[bufIndex++] = value;
+
+            // Move to the next token
+            token = strtok(NULL, ",");
+        }
+
+        // put into the queue
+        wifi_csi_info_t *q_data = malloc_or_die(sizeof(wifi_csi_info_t) + info.len);
+        *q_data = info;
+        memcpy(q_data->buf, info.buf, info.len);
+
+        if (!g_csi_info_queue) {
+            ESP_LOGW(TAG, "g_csi_info_queue fail");
+            free(q_data);
+        }
+
+        while(xQueueSend(g_csi_info_queue, &q_data, 0) == pdFALSE) {
+            ESP_LOGW(TAG, "g_csi_info_queue full, waiting 10 ms");
+            vTaskDelay(10 / portTICK_PERIOD_MS);
+        }
+        ESP_LOGI(TAG, " sent in queue");
+        free(info.buf);
+    }
+    free(buffer_string);
+
+    ESP_LOGI(TAG, "Done reading CSI from file, closing and stopping task");
+    fclose(file);
+
+    vTaskDelete(NULL);
+}
+
 void wifi_init_softap(void)
 {
     ESP_ERROR_CHECK(esp_netif_init());
@@ -2263,7 +2369,7 @@ void wifi_init_softap(void)
     ESP_ERROR_CHECK(esp_wifi_set_csi_config(&csi_config));
 }
 
-#ifdef CONFIG_SENSE_LOG_TO_SD
+#if defined(CONFIG_SENSE_LOG_TO_SD) || defined(CONFIG_PROCESS_CSI_FROM_FILE)
     void init_sdcard(void)
 {
     esp_err_t ret;
@@ -2419,10 +2525,11 @@ void app_main(void)
     }
 
 
-#ifdef CONFIG_SENSE_LOG_TO_SD
+#if defined(CONFIG_SENSE_LOG_TO_SD) || defined(CONFIG_PROCESS_CSI_FROM_FILE)
     init_sdcard();
 #endif
 
+#ifndef CONFIG_PROCESS_CSI_FROM_FILE
     esp_base_mac_addr_set(customBaseMAC);
 
     ESP_LOGI(TAG, "ESP_WIFI_MODE_AP");
@@ -2430,6 +2537,7 @@ void app_main(void)
     esp_wifi_set_protocol(WIFI_IF_AP, WIFI_PROTOCOL_11N);
     esp_wifi_config_80211_tx_rate(WIFI_IF_AP, WIFI_PHY_RATE_MCS7_SGI);
     esp_wifi_set_bandwidth(WIFI_IF_AP, WIFI_BW_HT20);
+#endif
 
     float_arr_alloc(MAX_NUMBER_OF_SAMPLES_KEPT, NUMBER_SUBCARRIERS, &amplitude_array);
 
@@ -2447,11 +2555,19 @@ void app_main(void)
     ESP_LOGI(TAG, "ran dummy inference");
 #endif
 
+
     g_csi_info_queue = xQueueCreate(256, sizeof(void *));
     buffer_queue = xQueueCreate(2048, sizeof(void *));
     xTaskCreate(csi_processing_task, "csi_data_print", 8 * 1024, NULL, 0, NULL);
+
+#ifdef CONFIG_PROCESS_CSI_FROM_FILE
+    xTaskCreate(csi_from_file_task, "csi_from_file_task", 8 * 1024, NULL, 0, NULL);
+#endif
+
+#ifndef CONFIG_PROCESS_CSI_FROM_FILE
     xTaskCreate(udp_client_task, "udp_client_task", 4 * 1024, NULL, 0, NULL);
     xTaskCreate(udp_calibration_task, "udp_calibration_task", 4 * 1024, NULL, 0, NULL);
+#endif
 #ifdef CONFIG_RUN_INFERENCE
     xTaskCreate(run_inference_task, "run_inference_task", 4*1024, NULL, 0, NULL);
 #endif

@@ -1,5 +1,11 @@
 menu "CSI Receiver Configuration"
 
+    config PROCESS_CSI_FROM_FILE
+        bool "Process CSI from file"
+        default false
+        help
+            Whether to process CSI from a file named "csi_process.csv" on the sd card instead of processing received CSI. 
+
     config FRAMES_PER_SECOND
         int "Frames per second"
         default 50
