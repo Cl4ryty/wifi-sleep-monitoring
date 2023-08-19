@@ -68,7 +68,7 @@
     #define MRC_PCA_EVERY_X_SECONDS     CONFIG_MRC_PCA_EVERY_X_SECONDS
 #endif
 
-#define NUMBER_SUBCARRIERS 52 // we only use LLTF so get 64 subcarriers
+#define NUMBER_SUBCARRIERS 64 // we only use LLTF so get 64 subcarriers
 #define MAX_NUMBER_OF_SAMPLES_KEPT  TIME_RANGE_TO_KEEP*CSI_RATE
 
 
@@ -767,10 +767,10 @@ static void csi_processing_task(void *arg)
         float sum = 0;
         for (int i=0 ; i < 64; i++)
         {
-            // skip null and pilot (unusable) subcarriers
-            if(i==0 || i==7 || i==21 || i==29 || i==30 || i==31 || i==32 || i==33 || i==34 || i==35 || i==43 || i==57 ){
-                continue;
-            }
+            // // skip null and pilot (unusable) subcarriers
+            // if(i==0 || i==7 || i==21 || i==29 || i==30 || i==31 || i==32 || i==33 || i==34 || i==35 || i==43 || i==57 ){
+            //     continue;
+            // }
             amplitude[i] = sqrt(pow(info->buf[i*2 + 0], 2) + pow(info->buf[i*2 + 1], 2));
             sum = sum + amplitude[i];
             // phase[i] = atan2(info->buf[i*2 + 0],info->buf[i*2 + 1]);
@@ -1493,6 +1493,10 @@ static void csi_processing_task(void *arg)
             len += sprintf(buffer + len, ",threshold_presence,f_presence,threshold_small_movement,f_small_movement,threshold_large_movement,f_large_movement");
 #endif
 
+#ifdef CONFIG_SENSE_PRINT_AMPLITUDES_SD
+            len += sprintf(buffer + len, ",amplitudes");
+#endif
+
 #ifdef CONFIG_SENSE_PRINT_SLEEP_STAGE_CLASSIFICATION_SD
             len += sprintf(buffer + len, ",sleep_stage_classification");
 #endif
@@ -1562,6 +1566,16 @@ static void csi_processing_task(void *arg)
 
 #ifdef CONFIG_SENSE_PRINT_THRESHOLDS_SD
             len += sprintf(buffer + len, ",%f,%f,%f,%f,%f,%f", t_presence, f_presence, t_small_movement, f_small_movement, t_large_movement, f_large_movement);
+#endif
+
+#ifdef CONFIG_SENSE_PRINT_AMPLITUDES_SD      
+        len += sprintf(buffer + len, ",[%f", amplitude[0]);
+
+        for (int i = 1; i < NUMBER_SUBCARRIERS; i++) {
+            len += sprintf(buffer + len, " %f", amplitude[i]);
+        }
+
+        len += sprintf(buffer + len, "]");
 #endif
 
 #ifdef CONFIG_SENSE_PRINT_SLEEP_STAGE_CLASSIFICATION_SD
@@ -1687,6 +1701,10 @@ static void csi_processing_task(void *arg)
             len += sprintf(buffer + len, ",threshold_presence,f_presence,threshold_small_movement,f_small_movement,threshold_large_movement,f_large_movement");
 #endif
 
+#ifdef CONFIG_SENSE_PRINT_AMPLITUDES_SD
+            len += sprintf(buffer + len, ",amplitudes");
+#endif
+
 #ifdef CONFIG_SENSE_PRINT_SLEEP_STAGE_CLASSIFICATION_SD
             len += sprintf(buffer + len, ",sleep_stage_classification");
 #endif
@@ -1759,6 +1777,16 @@ static void csi_processing_task(void *arg)
 
 #ifdef CONFIG_SENSE_PRINT_THRESHOLDS_SD
             len += sprintf(buffer + len, ",%f,%f,%f,%f,%f,%f", t_presence, f_presence, t_small_movement, f_small_movement, t_large_movement, f_large_movement);
+#endif
+
+#ifdef CONFIG_SENSE_PRINT_AMPLITUDES_SD      
+        len += sprintf(buffer + len, ",[%f", amplitude[0]);
+
+        for (int i = 1; i < NUMBER_SUBCARRIERS; i++) {
+            len += sprintf(buffer + len, " %f", amplitude[i]);
+        }
+
+        len += sprintf(buffer + len, "]");
 #endif
 
 #ifdef CONFIG_SENSE_PRINT_SLEEP_STAGE_CLASSIFICATION_SD
@@ -1859,6 +1887,10 @@ static void csi_processing_task(void *arg)
             len1 += sprintf(buffer + len1, ",threshold_presence,f_presence,threshold_small_movement,f_small_movement,threshold_large_movement,f_large_movement");
 #endif
 
+#ifdef CONFIG_SENSE_PRINT_AMPLITUDES_S
+            len1 += sprintf(buffer + len1, ",amplitudes");
+#endif
+
 #ifdef CONFIG_SENSE_PRINT_SLEEP_STAGE_CLASSIFICATION_S
             len1 += sprintf(buffer + len1, ",sleep_stage_classification");
 #endif
@@ -1929,6 +1961,16 @@ static void csi_processing_task(void *arg)
 
 #ifdef CONFIG_SENSE_PRINT_THRESHOLDS_S
             len1 += sprintf(buffer + len1, ",%f,%f,%f,%f,%f,%f", t_presence, f_presence, t_small_movement, f_small_movement, t_large_movement, f_large_movement);
+#endif
+
+#ifdef CONFIG_SENSE_PRINT_AMPLITUDES_S   
+        len1 += sprintf(buffer + len1, ",[%f", amplitude[0]);
+
+        for (int i = 1; i < NUMBER_SUBCARRIERS; i++) {
+            len1 += sprintf(buffer + len1, " %f", amplitude[i]);
+        }
+
+        len1 += sprintf(buffer + len1, "]");
 #endif
 
 #ifdef CONFIG_SENSE_PRINT_SLEEP_STAGE_CLASSIFICATION_S
@@ -2010,6 +2052,10 @@ static void csi_processing_task(void *arg)
             len2 += sprintf(buffer + len2, ",threshold_presence,f_presence,threshold_small_movement,f_small_movement,threshold_large_movement,f_large_movement");
 #endif
 
+#ifdef CONFIG_SENSE_PRINT_AMPLITUDES_U
+            len2 += sprintf(buffer + len2, ",amplitudes");
+#endif
+
 #ifdef CONFIG_SENSE_PRINT_SLEEP_STAGE_CLASSIFICATION_U
             len2 += sprintf(buffer + len2, ",sleep_stage_classification");
 #endif
@@ -2075,6 +2121,16 @@ static void csi_processing_task(void *arg)
 
 #ifdef CONFIG_SENSE_PRINT_THRESHOLDS_U
             len2 += sprintf(buffer + len2, ",%f,%f,%f,%f,%f,%f", t_presence, f_presence, t_small_movement, f_small_movement, t_large_movement, f_large_movement);
+#endif
+
+#ifdef CONFIG_SENSE_PRINT_AMPLITUDES_U      
+        len2 += sprintf(buffer + len2, ",[%f", amplitude[0]);
+
+        for (int i = 1; i < NUMBER_SUBCARRIERS; i++) {
+            len2 += sprintf(buffer + len2, " %f", amplitude[i]);
+        }
+
+        len2 += sprintf(buffer + len2, "]");
 #endif
 
 #ifdef CONFIG_SENSE_PRINT_SLEEP_STAGE_CLASSIFICATION_U

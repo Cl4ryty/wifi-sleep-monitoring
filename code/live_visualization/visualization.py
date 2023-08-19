@@ -85,6 +85,9 @@ parser.add_argument("--plot_up_to_down_amplitude_ratio",
 parser.add_argument("--plot_fractional_up_stroke_amplitude",
                     default=False)
 
+parser.add_argument("--plot_amplitudes",
+                    default=True)
+
 args = parser.parse_args()
 
 # use kconfiglib to parse the receivers config file and change plotting options accordingly
@@ -115,7 +118,10 @@ option_names = {
     "breath_features": "SENSE_PRINT_BREATHING_FEATURES",
     "heart_poi": "SENSE_PRINT_HEART_POI",
     "breath_poi": "SENSE_PRINT_BREATHING_POI",
-    "detection": "SENSE_PRINT_DETECTION"
+    "detection": "SENSE_PRINT_DETECTION",
+    "thresholds": "SENSE_PRINT_THRESHOLDS",
+    "amplitudes": "SENSE_PRINT_AMPLITUDES",
+    "sleep_stage": "SENSE_PRINT_SLEEP_STAGE_CLASSIFICATION"
 }
 
 option_suffix = "_SD"
@@ -175,7 +181,9 @@ option_indices = {
     "new_breath_poi": 11,
     "detected_presence": 12,
     "detected_small_movement": 13,
-    "detected_large_movement": 14
+    "detected_large_movement": 14,
+    "amplitudes": 21,
+    "sleep_stage": 22
 }
 
 # set up the window for pyqtgraph plots
@@ -192,6 +200,17 @@ MAXLEN = int(kconfig.syms["FRAMES_PER_SECOND"].user_value) * int(kconfig.syms["T
 
 time_queue = collections.deque(maxlen=MAXLEN)
 current_time = 0
+
+number_of_subcarriers = 64
+
+if kconfig.syms[option_names["amplitudes"] + option_suffix].user_value == 2 and args.plot_amplitudes:
+    carrier_plot = win.addPlot(title="Carrier Plot", row=row, col=0)
+    amplitudes_queue = collections.deque(maxlen=MAXLEN)
+    carrier_curves = []
+    for i in range(number_of_subcarriers):
+        curve = carrier_plot.plot()
+        carrier_curves.append(curve)
+    row += 1
 
 if kconfig.syms[option_names["sti"] + option_suffix].user_value == 2 and args.plot_sti:
     sti_queue = collections.deque(maxlen=MAXLEN)
@@ -524,7 +543,6 @@ def update_plot():
 
         time_queue.append(current_time)
         time_array = np.array(time_queue)
-        print("baum")
 
         if kconfig.syms[option_names["sti"] + option_suffix].user_value == 2 and args.plot_sti:
             print("values", values)
@@ -766,8 +784,6 @@ def update_plot():
         if kconfig.syms[option_names["breath_features"] + option_suffix].user_value != 2:
             reduce_index_by += 1
 
-        
-
         if kconfig.syms[option_names["heart_poi"] + option_suffix].user_value == 2 and args.plot_heart_pois and \
                 kconfig.syms[option_names["filtered_heart"] + option_suffix].user_value == 2 and \
                 args.plot_filtered_heart:
@@ -888,6 +904,23 @@ def update_plot():
 
         if kconfig.syms[option_names["detection"] + option_suffix].user_value != 2:
             reduce_index_by += 3
+
+        if kconfig.syms[option_names["thresholds"] + option_suffix].user_value != 2:
+            reduce_index_by += 6
+
+        if kconfig.syms[option_names["amplitudes"] + option_suffix].user_value == 2 and args.plot_amplitudes:
+            amplitudes = []
+            for value in values[option_indices["amplitudes"] - reduce_index_by][1:-1].split(" "):
+                amplitudes.append(float(value))
+
+            amplitudes_queue.append(amplitudes)
+            amplitude = np.array(amplitudes_queue)
+            for j, carrier_amplitudes in enumerate(np.transpose(amplitude)):
+                if not j in [0, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37]:
+                    carrier_curves[j].setData(time_array, carrier_amplitudes)
+
+        if kconfig.syms[option_names["amplitudes"] + option_suffix].user_value != 2:
+            reduce_index_by += 1
 
         current_time += 1
 

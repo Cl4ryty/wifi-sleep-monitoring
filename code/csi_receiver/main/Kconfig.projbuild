@@ -159,7 +159,13 @@ menu "CSI Receiver Configuration"
                 bool "print CSI"
                 default true
                 help
-                    Whether to print the receives CSI to a file on the SD card (and other outputs if different logging is not enabled).
+                    Whether to print the received CSI to a file on the SD card (and other outputs if different logging is not enabled).
+
+            config SENSE_PRINT_AMPLITUDES_SD
+                bool "print amplitudes"
+                default true
+                help
+                    Whether to print the amplitudes of the subcarriers to a file on the SD card (and other outputs if different logging is not enabled).
 
             config SENSE_PRINT_STI_SD
                 bool "print sti value"
@@ -243,7 +249,13 @@ menu "CSI Receiver Configuration"
                 bool "print CSI"
                 default true
                 help
-                    Whether to print the receives CSI to serial.
+                    Whether to print the received CSI to serial.
+
+            config SENSE_PRINT_AMPLITUDES_S
+                bool "print amplitudes"
+                default true
+                help
+                    Whether to print the amplitudes of the subcarriers to serial.
 
             config SENSE_PRINT_STI_S
                 bool "print sti value"
@@ -327,7 +339,13 @@ menu "CSI Receiver Configuration"
                 bool "print CSI"
                 default true
                 help
-                    Whether to print the receives CSI to UDP broadcast.
+                    Whether to print the received CSI to UDP broadcast.
+
+            config SENSE_PRINT_AMPLITUDES_U
+                bool "print amplitudes"
+                default true
+                help
+                    Whether to print the amplitudes of the subcarriers to UDP broadcast.
 
             config SENSE_PRINT_STI_U
                 bool "print sti value"
