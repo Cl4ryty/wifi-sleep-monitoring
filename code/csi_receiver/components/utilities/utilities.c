@@ -304,6 +304,12 @@ void poi_list_initialize(POI_List *poi_list, int length){
     poi_list->list = malloc_or_die(sizeof(POI) * length);
 }
 
+void poi_list_reset(POI_List *poi_list){
+    poi_list->first_element_index = 0;
+    poi_list->last_element_index = 0;
+    poi_list->number_of_elements = 0;
+}
+
 void poi_list_append(POI_List *poi_list, POI *poi){
 
     if(poi_list->number_of_elements == 0){

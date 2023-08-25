@@ -20,21 +20,42 @@ menu "CSI Receiver Configuration"
         help
             The time range of samples kept for processing in seconds.
 
+    config REMOVE_STATIC_COMPONENT
+        bool "Remove static component"
+        default true
+        help
+            Whether to remove the static CSI component from the amplitude before further processing. 
+
     config FFT_EVERY_X_SECONDS
         int "FFT every x seconds"
         default 10
         range 0 1000
         help
             The interval (in seconds) after which FFT rate estimations performed.
+
+    config SUBCARRIER_SELECTION_INSTEAD_OF_FUSION
+        bool "Subcarrier selection instead of fusion"
+        default true
+        help
+            Whether to select one subcarrier to use based on the subcarrier amplitude variance instead of using MRC-PCA for subcarrier fusion.
+
+    config SUBCARRIER_SELECTION_EVERY_X_SECONDS
+        depends on SUBCARRIER_SELECTION_INSTEAD_OF_FUSION
+        int "Subcarrier selection every X seconds"
+        default 30
+        range 0 1000
+        help
+            The interval (in seconds) after which to perform subcarrier selection based on the subcarrier amplitude variance.
        
     config MRC_PCA_ON_TIMER
+            depends on !SUBCARRIER_SELECTION_INSTEAD_OF_FUSION
             bool "MRC-PCA on timer"
             default true
             help
                 Whether to perform MRC-PCA every X seconds as if on a timer.
 
     config MRC_PCA_EVERY_X_SECONDS
-        depends on MRC_PCA_ON_TIMER
+        depends on MRC_PCA_ON_TIMER && !SUBCARRIER_SELECTION_INSTEAD_OF_FUSION
         int "MRC-PCA every x seconds"
         default 120
         range 0 1000
@@ -42,18 +63,21 @@ menu "CSI Receiver Configuration"
             The interval (in seconds) after which the MRC-PCA is performed to calculate the weights for subcarrier fusion.
 
     config MRC_PCA_AFTER_MOVEMENT
+        depends on !SUBCARRIER_SELECTION_INSTEAD_OF_FUSION
         bool "MRC-PCA after large movement"
         default false
         help
             Whether to perform MRC-PCA (calculating the coefficients for subcarrier fusion) after large movement was detected - if it hasn't been performed too recently.
     
     config MRC_PCA_ON_NEW_PRESENCE
+        depends on !SUBCARRIER_SELECTION_INSTEAD_OF_FUSION
         bool "MRC-PCA on new presence"
         default false
         help
             Whether to perform MRC-PCA (calculating the coefficients for subcarrier fusion) after new presence was detected - if it hasn't been performed too recently.
 
     config MRC_PCA_MINIMUM_INTERVAL
+        depends on !SUBCARRIER_SELECTION_INSTEAD_OF_FUSION
         depends on MRC_PCA_AFTER_MOVEMENT || MRC_PCA_ON_NEW_PRESENCE
         int "Minimum MRC-PCA interval"
         default 10

@@ -12,7 +12,8 @@
 
 #include "lwip/sockets.h"
 
-#include "utilities.h"
+#include "../components/utilities/include/utilities.h"
+// #include "utilities.h"
 #include "using_eigen.h"
 #include "fft.h"
 #include "run_tf_inference.h"
@@ -110,12 +111,16 @@ float fft_frequencies[] = {0.0, 0.048828125, 0.09765625, 0.146484375, 0.1953125,
 
 unsigned previous_fft_timestamp = 0; 
 unsigned previous_mrc_pca_timestamp = 0; 
+// initialize the Ts for peak/valley detection to reasonable values - these will be replaced by fft estimates once fft has run
+float T_breath = 3; // period in seconds 3 corresponds to 20 bpm
+float T_heart = 1; // period in seconds 1 corresponds to 60 bpm
 
 
 float (*amplitude_array)[MAX_NUMBER_OF_SAMPLES_KEPT][NUMBER_SUBCARRIERS];
 unsigned timestamp_array[MAX_NUMBER_OF_SAMPLES_KEPT];
 static int16_t current_first_element = -1;
 static int16_t current_last_element = -1;
+int current_number_of_samples = 0;
 
 float filtered_breath[MAX_NUMBER_OF_SAMPLES_KEPT];
 float filtered_heart[MAX_NUMBER_OF_SAMPLES_KEPT];
@@ -169,6 +174,13 @@ bool large_movement_detected_previously = false;
 bool ran_mrc_in_the_beginning = false;
 
 bool button_pressed = false;
+bool discarded_samples = false;
+
+int selected_subcarrier = 42; // arbitrarily selected subcarrier to start with until it is selected based on variance
+DumbRunningMean subcarrier_amplitude_means[NUMBER_SUBCARRIERS];
+DumbRunningMean fused_heart_mean;
+DumbRunningMean fused_breath_mean;
+int previous_subcarrier_selection_timestamp = 0;
 
 #ifdef CONFIG_MRC_PCA_ON_TIMER
     bool do_not_run_mrc_on_timer = false;
@@ -723,6 +735,85 @@ float fft_rate_estimation(float *data, int data_length, int data_current_last_in
 }
 
 
+void variance_based_subcarrier_selection(float data[][NUMBER_SUBCARRIERS], int data_length, int data_current_last_index, int data_current_first_index, DumbRunningMean subcarrier_means[NUMBER_SUBCARRIERS]){
+    ESP_LOGI(TAG, "subcarrier selection");
+    // get the amplitudes for each subcarrier and calculate the variance
+
+    // initialize variances as 0
+    float variances[NUMBER_SUBCARRIERS] = {0};
+
+    int number_of_elements = 0;
+
+    ESP_LOGI(TAG, "subcarrier selection 1, variances %d", variances);
+
+    // iterate over the samples to get variance
+    for(int i=data_current_first_index; i!=data_current_last_index; i=get_next_index(i, data_length)){
+        number_of_elements++;
+        //for each subcarrier
+        for(int s=0; s<NUMBER_SUBCARRIERS; s++){
+            variances[s] += powf(data[i][s] - subcarrier_means[s].current_mean, 2);
+        }
+    }
+
+    ESP_LOGI(TAG, "subcarrier selection 2");
+
+    // get the subcarrier with the maximum variance
+    float maximum = -1.0;
+    int maximum_index = 0;
+    for(int s=0; s<NUMBER_SUBCARRIERS; s++){
+        if(variances[s]/number_of_elements > maximum){
+            maximum = variances[s]/number_of_elements;
+            maximum_index = s;
+        }
+    }
+
+    ESP_LOGI(TAG, "subcarrier %d selected, which has a variance of %f, previous subcarrier selection was %d", maximum_index, maximum, selected_subcarrier);
+    if(maximum_index == selected_subcarrier){
+        ESP_LOGI(TAG, "same subcarrier selected as before");
+    }else{
+        // TODO
+        ESP_LOGI(TAG, "new subcarrier selected");
+        
+        // fill filtered amplitude arrays
+        float fused_amplitude_breath = 0;
+        float fused_amplitude_heart = 0;
+        for(int i=data_current_first_index; i!=data_current_last_index; i=get_next_index(i, data_length)){   
+            fused_amplitude_breath = data[i][selected_subcarrier];
+            fused_amplitude_heart = data[i][selected_subcarrier];
+#ifdef CONFIG_REMOVE_STATIC_COMPONENT
+            fused_amplitude_breath = data[i][selected_subcarrier] - subcarrier_means[selected_subcarrier].current_mean;
+            fused_amplitude_heart = data[i][selected_subcarrier] - subcarrier_means[selected_subcarrier].current_mean;           
+#endif
+            // bandpass filter the amplitude
+            bandpass_filter_apply(&breathing_filter, fused_amplitude_breath);
+            bandpass_filter_apply(&heart_filter, fused_amplitude_heart);
+            // save the filtered amplitude
+            filtered_breath[i] = breathing_filter.out;
+            filtered_heart[i] = heart_filter.out;
+        }
+
+        // run fft estimation
+        if(current_number_of_samples > fft_count){
+            T_breath = fft_rate_estimation(&filtered_breath, MAX_NUMBER_OF_SAMPLES_KEPT, current_last_element, fft_count);
+            T_heart = fft_rate_estimation(&filtered_heart, MAX_NUMBER_OF_SAMPLES_KEPT, current_last_element, fft_count);
+            breath_features.fft_rate_over_window = T_breath;
+            heart_features.fft_rate_over_window = T_breath;
+
+            previous_fft_timestamp = timestamp_array[current_last_element];
+            ESP_LOGI(TAG, "fft rate estimated, breathing rate %f, heart rate %f, current timestamp %d", T_breath, T_heart, timestamp_array[current_last_element]);
+        }
+
+        // reset MAC and corresponding POI lists
+        MAC_breath.first_intercept = true;
+        MAC_heart.first_intercept = true;
+        poi_list_reset(&breath_pois);
+        poi_list_reset(&heart_pois);
+
+    }
+    selected_subcarrier = maximum_index;
+}
+
+
 static void csi_processing_task(void *arg)
 {
     wifi_csi_info_t *info = NULL;
@@ -771,6 +862,12 @@ static void csi_processing_task(void *arg)
             //     continue;
             // }
             amplitude[i] = sqrt(pow(info->buf[i*2 + 0], 2) + pow(info->buf[i*2 + 1], 2));
+            if(first_run){
+                dumb_running_mean_initialize(&subcarrier_amplitude_means[i], MAX_NUMBER_OF_SAMPLES_KEPT);
+                dumb_running_mean_append(&subcarrier_amplitude_means[i], amplitude[i], rx_ctrl->timestamp, MAX_NUMBER_OF_SAMPLES_KEPT);
+            }else{
+                dumb_running_mean_append(&subcarrier_amplitude_means[i], amplitude[i], rx_ctrl->timestamp, MAX_NUMBER_OF_SAMPLES_KEPT);
+            }
             sum = sum + amplitude[i];
             // phase[i] = atan2(info->buf[i*2 + 0],info->buf[i*2 + 1]);
         }
@@ -823,6 +920,8 @@ static void csi_processing_task(void *arg)
         }else{
             large_movement_detected = false;
         }
+
+        current_number_of_samples++;
         
         // append amplitude to corresponding queue / array
         if(current_last_element+1 < MAX_NUMBER_OF_SAMPLES_KEPT)
@@ -835,6 +934,7 @@ static void csi_processing_task(void *arg)
         }
         if(current_first_element == current_last_element){
             current_first_element = current_first_element+1;
+            current_number_of_samples--;
         }
         if(current_first_element == -1 || current_first_element == MAX_NUMBER_OF_SAMPLES_KEPT){
             current_first_element = 0;
@@ -848,15 +948,44 @@ static void csi_processing_task(void *arg)
         timestamp_array[current_last_element] = rx_ctrl->timestamp;
 
 
-        // calculate fused amplitude
+        // fused amplitude is used for both fusion and selection, although the name is not chosen very well for the latter
         float fused_amplitude_breath = 0;
         float fused_amplitude_heart = 0;
+#ifdef CONFIG_SUBCARRIER_SELECTION_INSTEAD_OF_FUSION    
+        fused_amplitude_breath = amplitude[selected_subcarrier];
+        fused_amplitude_heart = amplitude[selected_subcarrier];
+#ifdef CONFIG_REMOVE_STATIC_COMPONENT
+        fused_amplitude_breath = amplitude[selected_subcarrier] - subcarrier_amplitude_means[selected_subcarrier].current_mean;
+        fused_amplitude_heart = amplitude[selected_subcarrier] - subcarrier_amplitude_means[selected_subcarrier].current_mean;
+             
+#endif
+#endif
+
+#ifndef CONFIG_SUBCARRIER_SELECTION_INSTEAD_OF_FUSION   
+        // calculate fused amplitude
+
         for(int i=0; i<NUMBER_SUBCARRIERS; i++){
             fused_amplitude_breath += (amplitude[i] * (MRC_ratios_breath[i]/MRC_scalar_breath));
             fused_amplitude_heart += (amplitude[i] * (MRC_ratios_heart[i]/MRC_scalar_heart));
         }
+        if(first_run){
+            dumb_running_mean_initialize(&fused_heart_mean, MAX_NUMBER_OF_SAMPLES_KEPT);
+            dumb_running_mean_append(&fused_heart_mean, fused_amplitude_heart, timestamp_array[current_last_element], MAX_NUMBER_OF_SAMPLES_KEPT);
 
-        // bandpass filter the fused amplitude
+            dumb_running_mean_initialize(&fused_breath_mean, MAX_NUMBER_OF_SAMPLES_KEPT);
+            dumb_running_mean_append(&fused_breath_mean, fused_amplitude_breath, timestamp_array[current_last_element], MAX_NUMBER_OF_SAMPLES_KEPT);
+        }else{
+            dumb_running_mean_append(&fused_heart_mean, fused_amplitude_heart, timestamp_array[current_last_element], MAX_NUMBER_OF_SAMPLES_KEPT);
+            dumb_running_mean_append(&fused_breath_mean, fused_amplitude_breath, timestamp_array[current_last_element], MAX_NUMBER_OF_SAMPLES_KEPT);            
+        }
+
+#ifdef CONFIG_REMOVE_STATIC_COMPONENT
+        fused_amplitude_breath = fused_amplitude_breath - fused_breath_mean.current_mean;
+        fused_amplitude_heart = fused_amplitude_heart - fused_heart_mean.current_mean;
+#endif
+#endif
+
+        // bandpass filter the amplitude
         bandpass_filter_apply(&breathing_filter, fused_amplitude_breath);
         bandpass_filter_apply(&heart_filter, fused_amplitude_heart);
         // save the filtered amplitude
@@ -866,8 +995,6 @@ static void csi_processing_task(void *arg)
 
         // MAC calculations
         // get T by using FFT on the filtered waveform
-        float T_breath = 3; // period in seconds 3 corresponds to 20 bpm
-        float T_heart = 1; // period in seconds 1 corresponds to 60 bpm
 
 #ifdef CONFIG_MRC_PCA_ON_NEW_PRESENCE
         // perform MRC-PCA if new presence has been detected
@@ -889,7 +1016,7 @@ static void csi_processing_task(void *arg)
         }
 #endif
 
-
+#ifndef CONFIG_SUBCARRIER_SELECTION_INSTEAD_OF_FUSION
         // perform MRC-PCA every X seconds
         if(((do_not_run_mrc_on_timer && !ran_mrc_in_the_beginning) || !do_not_run_mrc_on_timer) && timestamp_array[current_last_element]-previous_mrc_pca_timestamp >= MRC_PCA_EVERY_X_SECONDS*SECONDS_TO_MICROSECONDS){
             MRC_scalar_breath = mrc_pca(MRC_ratios_breath, amplitude_array, MAX_NUMBER_OF_SAMPLES_KEPT, current_last_element, fft_count, BREATH_LOWER_FREQUENCY_BOUND, BREATH_UPPER_FREQUENCY_BOUND, breathing_bandpass_coefficients[0], breathing_bandpass_coefficients[1]);
@@ -898,8 +1025,19 @@ static void csi_processing_task(void *arg)
             ran_mrc_in_the_beginning = true;
         }
 
+#endif
+
+#ifdef CONFIG_SUBCARRIER_SELECTION_INSTEAD_OF_FUSION
+        // perform subcarrier selection every X seconds
+        if(timestamp_array[current_last_element]-previous_subcarrier_selection_timestamp >= CONFIG_SUBCARRIER_SELECTION_EVERY_X_SECONDS*SECONDS_TO_MICROSECONDS){
+            variance_based_subcarrier_selection(amplitude_array, MAX_NUMBER_OF_SAMPLES_KEPT, current_last_element, current_first_element, subcarrier_amplitude_means);
+            previous_subcarrier_selection_timestamp = timestamp_array[current_last_element];
+        }
+#endif
+
         // get fft rate estimation every x seconds
-        if(timestamp_array[current_last_element]-previous_fft_timestamp >= FFT_EVERY_X_SECONDS*SECONDS_TO_MICROSECONDS){
+        // only run fft if we have collected enough samples
+        if(current_number_of_samples > fft_count && timestamp_array[current_last_element]-previous_fft_timestamp >= FFT_EVERY_X_SECONDS*SECONDS_TO_MICROSECONDS){
             T_breath = fft_rate_estimation(&filtered_breath, MAX_NUMBER_OF_SAMPLES_KEPT, current_last_element, fft_count);
             T_heart = fft_rate_estimation(&filtered_heart, MAX_NUMBER_OF_SAMPLES_KEPT, current_last_element, fft_count);
             breath_features.fft_rate_over_window = T_breath;
@@ -909,7 +1047,7 @@ static void csi_processing_task(void *arg)
             ESP_LOGI(TAG, "fft rate estimated, breathing rate %f, heart rate %f, current timestamp %d", T_breath, T_heart, timestamp_array[current_last_element]);
         }
 
-        // MAC for breathing
+        // MAC for breathingon
         int T_timestamp = 60/T_breath * SECONDS_TO_MICROSECONDS;
 
         bool breath_found_poi = false;
@@ -1499,7 +1637,7 @@ static void csi_processing_task(void *arg)
 #ifdef CONFIG_SENSE_PRINT_SLEEP_STAGE_CLASSIFICATION_SD
             len += sprintf(buffer + len, ",sleep_stage_classification");
 #endif
-            len += sprintf(buffer + len, ",button_pressed");
+            len += sprintf(buffer + len, ",button_pressed,discarded_samples");
             len += sprintf(buffer + len, ",sequence,timestamp,source_mac,first_word_invalid,len,rssi,rate,sig_mode,mcs,bandwidth,smoothing,not_sounding,aggregation,stbc,fec_coding,sgi,noise_floor,ampdu_cnt,channel,secondary_channel,local_timestamp,ant,sig_len,rx_state");
 #ifdef CONFIG_SENSE_PRINT_CSI_SD   
             len += sprintf(buffer + len, ",data");
@@ -1581,7 +1719,7 @@ static void csi_processing_task(void *arg)
             len += sprintf(buffer + len, ",%d", sleep_stage);
 #endif
 
-        len += sprintf(buffer + len, ",%d", button_pressed);
+        len += sprintf(buffer + len, ",%d,%d", button_pressed, discarded_samples);
         len += sprintf(buffer + len, ",%d,%u," MACSTR ",%d,%d,%d,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%d,%u,%u,%u,%u,%u,%u,%u",
                     count, esp_log_timestamp(),
                     MAC2STR(info->mac), info->first_word_invalid, info->len, rx_ctrl->rssi, rx_ctrl->rate, rx_ctrl->sig_mode,
@@ -1708,7 +1846,7 @@ static void csi_processing_task(void *arg)
             len += sprintf(buffer + len, ",sleep_stage_classification");
 #endif
 
-            len += sprintf(buffer + len, ",button_pressed");
+            len += sprintf(buffer + len, ",button_pressed,discarded_samples");
 
             len += sprintf(buffer + len, ",sequence,timestamp,source_mac,first_word_invalid,len,rssi,rate,sig_mode,mcs,bandwidth,smoothing,not_sounding,aggregation,stbc,fec_coding,sgi,noise_floor,ampdu_cnt,channel,secondary_channel,local_timestamp,ant,sig_len,rx_state");
 
@@ -1792,7 +1930,7 @@ static void csi_processing_task(void *arg)
             len += sprintf(buffer + len, ",%d", sleep_stage);
 #endif
 
-        len += sprintf(buffer + len, ",%d", button_pressed);
+        len += sprintf(buffer + len, ",%d,%d", button_pressed, discarded_samples);
         len += sprintf(buffer + len, ",%d,%u," MACSTR ",%d,%d,%d,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%d,%u,%u,%u,%u,%u,%u,%u",
                     count, esp_log_timestamp(),
                     MAC2STR(info->mac), info->first_word_invalid, info->len, rx_ctrl->rssi, rx_ctrl->rate, rx_ctrl->sig_mode,
@@ -2166,6 +2304,7 @@ static void csi_processing_task(void *arg)
         }
 #endif
         button_pressed = false;
+        discarded_samples = false;
         count++;
         free(info);
     }
@@ -2197,12 +2336,14 @@ static void csi_callback(void *ctx, wifi_csi_info_t *info)
 
         if (!g_csi_info_queue || xQueueSend(g_csi_info_queue, &q_data, 0) == pdFALSE) {
             ESP_LOGW(TAG, "g_csi_info_queue full");
+            discarded_samples = true;
             free(q_data);
         }
     }
 }
 
 
+#ifdef CONFIG_PROCESS_CSI_FROM_FILE
 static void csi_from_file_task()
 {
 
@@ -2308,6 +2449,7 @@ static void csi_from_file_task()
 
     vTaskDelete(NULL);
 }
+#endif
 
 void wifi_init_softap(void)
 {

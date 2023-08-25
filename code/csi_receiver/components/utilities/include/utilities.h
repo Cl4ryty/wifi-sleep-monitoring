@@ -206,6 +206,8 @@ void poi_initialize(POI *poi, bool is_peak, unsigned time_difference, float ampl
 
 void poi_list_initialize(POI_List *poi_list, int length);
 
+void poi_list_reset(POI_List *poi_list);
+
 void poi_list_append(POI_List *poi_list, POI *poi);
 
 void calculate_variance_features(Features *f, POI_List *pois);
