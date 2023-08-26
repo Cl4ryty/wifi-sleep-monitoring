@@ -1,0 +1,556 @@
+---
+title: "Thesis Analysis"
+output: html_document
+date: "2023-08-24"
+params:
+  ecg_rate: 256
+  breath_rate: 256
+  HR_rate: 100
+  BR_rate: 100
+  SS_rate: 0.1/3
+
+
+---
+  
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(scales)
+library(dygraphs)
+library(xts)
+library(respR)
+library(lubridate)
+```
+
+## R Markdown
+
+```{r data, echo=FALSE, warning=FALSE, message=FALSE, results='hide'}
+# load the data
+# CSI data
+
+read_plus <- function(flnm) {
+    read_csv(flnm) %>% 
+        mutate(filename = flnm)
+}
+
+data_with_sources <-
+    list.files(path = "../../data/testing/csi",
+               pattern = "*.CSV", 
+               full.names = T) %>% 
+    map_df(~read_plus(.))
+
+data <- data_with_sources[data_with_sources$filename=="../../data/testing/csi/CSI.CSV", ]
+csi <- data$data
+csi <- data.frame(csi)
+
+csi <- csi %>%
+  mutate(csi = substr(csi, 2, nchar(csi) - 1)) %>%
+  mutate(csi = strsplit(csi, ",")) %>%
+  mutate(csi = lapply(csi, function(x) as.numeric(x)))
+
+csi <- data.frame(matrix(unlist(csi$csi), ncol = 128, byrow = TRUE))
+
+which(data$button_pressed == 1)
+
+csi_start_index <- 4836
+csi_end_index <- nrow(csi)
+
+csi <- csi[csi_start_index:csi_end_index, ]
+csi <- csi %>% mutate(time = row_number()/50)
+nrow(csi)
+csi$time[nrow(csi)]
+
+
+
+# ground truth
+# heart rate
+gt_heart_rate <- read_csv("../../data/testing/ground_truth/hr.txt", skip = 7, col_types = cols("d"))
+colnames(gt_heart_rate) <- "heart_rate"
+gt_heart_rate <- gt_heart_rate %>%
+  mutate(time = row_number()/params$HR_rate)
+gt_heart_rate <- gt_heart_rate[0:which(gt_heart_rate$time>csi$time[nrow(csi)])[1], ]
+gt_heart_rate <- subsample(gt_heart_rate, length.out = nrow(csi))
+
+# ecg
+gt_ecg <- read_csv("../../data/testing/ground_truth/ecg.txt", skip = 7, col_types = cols("d"))
+colnames(gt_ecg) <- "ecg"
+
+# breathing rate
+gt_breathing_rate <- read_csv("../../data/testing/ground_truth/br.txt", skip = 7, col_types = cols("d"))
+colnames(gt_breathing_rate) <- "breathing rate"
+gt_breathing_rate <- gt_breathing_rate %>%
+  mutate(time = row_number()/params$BR_rate)
+which(gt_breathing_rate$time>csi$time[nrow(csi)])[1]
+gt_breathing_rate <- gt_breathing_rate[0:which(gt_breathing_rate$time>csi$time[nrow(csi)])[1], ]
+gt_breathing_rate <- subsample(gt_breathing_rate, length.out = nrow(csi))
+
+# breathing
+gt_breath <- read_csv("../../data/testing/ground_truth/breath.txt", skip = 7, col_types = cols("d"))
+colnames(gt_breath) <- "breath"
+```
+
+## Breathing and heart rate error
+
+
+```{r errors, echo=FALSE}
+breath_features <- data$breath_features
+breath_features <- data.frame(breath_features)
+
+breath_features <- breath_features %>%
+  mutate(breath_features = substr(breath_features, 2, nchar(breath_features) - 1)) %>%
+  mutate(breath_features = strsplit(breath_features, " ")) %>%
+  mutate(breath_features = lapply(breath_features, function(x) as.numeric(x)))
+
+breath_features <- data.frame(matrix(unlist(breath_features$breath_features), ncol = 19, byrow = TRUE))
+colnames(breath_features) <- c("instantaneous_peak_rate","instantaneous_valley_rate","mean_peak_rate_over_window","mean_valley_rate_over_window","fft_rate_over_window","variance_of_peak_rate_in_window","variance_of_valley_rate_in_window","mean_up_stroke_length","mean_down_stroke_length","up_stroke_length_variance","down_stroke_length_variance","up_to_down_length_ratio","fractional_up_stroke_time","mean_up_stroke_amplitude","mean_down_stroke_amplitude","up_stroke_amplitude_variance","down_stroke_amplitude_variance","up_to_down_amplitude_ratio","fractional_up_stroke_amplitude")
+
+breath_features <- breath_features[csi_start_index:csi_end_index,]
+
+
+heart_features <- data$heart_features
+heart_features <- data.frame(heart_features)
+
+heart_features <- heart_features %>%
+  mutate(heart_features = substr(heart_features, 2, nchar(heart_features) - 1)) %>%
+  mutate(heart_features = strsplit(heart_features, " ")) %>%
+  mutate(heart_features = lapply(heart_features, function(x) as.numeric(x)))
+
+heart_features <- data.frame(matrix(unlist(heart_features$heart_features), ncol = 19, byrow = TRUE))
+colnames(heart_features) <- c("instantaneous_peak_rate","instantaneous_valley_rate","mean_peak_rate_over_window","mean_valley_rate_over_window","fft_rate_over_window","variance_of_peak_rate_in_window","variance_of_valley_rate_in_window","mean_up_stroke_length","mean_down_stroke_length","up_stroke_length_variance","down_stroke_length_variance","up_to_down_length_ratio","fractional_up_stroke_time","mean_up_stroke_amplitude","mean_down_stroke_amplitude","up_stroke_amplitude_variance","down_stroke_amplitude_variance","up_to_down_amplitude_ratio","fractional_up_stroke_amplitude")
+
+heart_features <- heart_features[csi_start_index:csi_end_index,]
+
+# get the error and absolute error for breathing and heart rate
+breath_results <- cbind(breath_features$fft_rate_over_window, breath_features$mean_peak_rate_over_window, gt_breathing_rate)
+colnames(breath_results) <- c("fft_rate_over_window", "mean_peak_rate_over_window", "gt_breathing_rate", "time")
+heart_results <- cbind(heart_features$fft_rate_over_window, heart_features$mean_peak_rate_over_window, gt_heart_rate)
+colnames(heart_results) <- c("fft_rate_over_window", "mean_peak_rate_over_window", "gt_heart_rate", "time")
+
+breath_results <- breath_results %>%
+  mutate(fft_error = fft_rate_over_window - gt_breathing_rate,
+         abs_fft_error = abs(fft_rate_over_window - gt_breathing_rate),
+         error = mean_peak_rate_over_window - gt_breathing_rate,
+         abs_error = abs(mean_peak_rate_over_window - gt_breathing_rate))
+
+heart_results <- heart_results %>%
+  mutate(fft_error = fft_rate_over_window - gt_heart_rate,
+         abs_fft_error = abs(fft_rate_over_window - gt_heart_rate),
+         error = mean_peak_rate_over_window - gt_heart_rate,
+         abs_error = abs(mean_peak_rate_over_window - gt_heart_rate))
+
+# plot the results
+to_plot <- breath_results %>% select(fft_error, abs_fft_error, error, abs_error) %>% pivot_longer(cols = everything(), names_to = "error_type", values_to = "values") %>% group_by(error_type)
+to_plot %>% ggplot() +
+  geom_violin(aes(values, error_type, fill = error_type)) +
+  theme_light()+
+  labs(title = "Breathing rate estimation errors")+
+  xlab("Error (in bpm)")+
+  theme(legend.position = "none",
+        axis.title.y = element_blank(),
+        axis.text.y = element_text())+
+  scale_y_discrete(labels=c("absolute peak rate error", "absolute fft rate error", "peak rate error", "fft rate error"))
+
+# print the summary
+to_plot %>% summarise(
+  minimum = min(values),
+  mean = mean(values),
+  median = median(values),
+  maximum = max(values))
+
+# plot the results
+to_plot <-  heart_results %>% select(fft_error, abs_fft_error, error, abs_error) %>% pivot_longer(cols = everything(), names_to = "error_type", values_to = "values") %>% group_by(error_type)
+to_plot %>% ggplot() +
+  geom_violin(aes(values, error_type, fill = error_type)) +
+  theme_light()+
+  labs(title = "Heart rate estimation errors")+
+  xlab("Error (in bpm)")+
+  theme(legend.position = "none",
+        axis.title.y = element_blank(),
+        axis.text.y = element_text())+
+  scale_y_discrete(labels=c("absolute peak rate error", "absolute fft rate error", "peak rate error", "fft rate error"))
+
+# print the summary
+to_plot %>% summarise(
+  minimum = min(values),
+  mean = mean(values),
+  median = median(values),
+  maximum = max(values))
+
+```
+# Visualization of system with default settings
+
+```{r visualization, echo=FALSE}
+data <- data_with_sources[data_with_sources$filename=="../../data/testing/csi/CSI.CSV", ]
+gt_ecg <- gt_ecg %>% mutate(time = row_number()/256)%>% select(time, everything())
+gt_breath <- gt_breath %>% mutate(time = row_number()/256)%>% select(time, everything())
+
+visualization_data <- data %>% select(fused_heart_amplitude, fused_breath_amplitude, filtered_heart, filtered_breath)
+
+visualization_data <- visualization_data[csi_start_index:csi_end_index, ]
+visualization_data <- visualization_data %>% mutate(time = row_number()/50)
+
+ecg <- zoo(as.integer(gt_ecg$ecg), as.POSIXct(gt_ecg$time, "UTC", origin = "1970-01-01"))
+filtered_heart <- zoo(as.double(visualization_data$filtered_heart), as.POSIXct(visualization_data$time, "UTC", origin = "1970-01-01"))
+
+eventData <- cbind(ecg, filtered_heart)
+eventData <- na.locf(eventData)
+
+dygraph(eventData) %>% 
+  dyOptions(drawGrid = F) %>%
+  dyAxis("y", label = "ECG Voltage", independentTicks = TRUE) %>%
+  dyAxis("y2", label = "Filtered heart amplitude", independentTicks = TRUE) %>%
+  dySeries("ecg", axis=('y')) %>%
+  dySeries("filtered_heart", axis=('y2'))
+
+
+breath <- zoo(as.integer(gt_breath$breath), as.POSIXct(gt_breath$time, "UTC", origin = "1970-01-01"))
+filtered_breath <- zoo(as.double(visualization_data$filtered_breath), as.POSIXct(visualization_data$time, "UTC", origin = "1970-01-01"))
+
+eventData <- cbind(breath, filtered_breath)
+eventData <- na.locf(eventData)
+
+dygraph(eventData) %>% 
+  dyOptions(drawGrid = F) %>%
+  dyAxis("y", label = "Breath", independentTicks = TRUE) %>%
+  dyAxis("y2", label = "Filtered breathing amplitude", independentTicks = TRUE) %>%
+  dySeries("breath", axis=('y')) %>%
+  dySeries("filtered_breath", axis=('y2'))
+```
+
+# Effect of different parameters - single plots for each condition
+```{r, echo=FALSE}
+for (name in unique(data_with_sources$filename)){
+  print(name)
+  data <- data_with_sources[data_with_sources$filename == name, ]
+  breath_features <- data$breath_features
+  breath_features <- data.frame(breath_features)
+  
+  breath_features <- breath_features %>%
+    mutate(breath_features = substr(breath_features, 2, nchar(breath_features) - 1)) %>%
+    mutate(breath_features = strsplit(breath_features, " ")) %>%
+    mutate(breath_features = lapply(breath_features, function(x) as.numeric(x)))
+
+  breath_features <- data.frame(matrix(unlist(breath_features$breath_features), ncol = 19, byrow = TRUE))
+  colnames(breath_features) <- c("instantaneous_peak_rate","instantaneous_valley_rate","mean_peak_rate_over_window","mean_valley_rate_over_window","fft_rate_over_window","variance_of_peak_rate_in_window","variance_of_valley_rate_in_window","mean_up_stroke_length","mean_down_stroke_length","up_stroke_length_variance","down_stroke_length_variance","up_to_down_length_ratio","fractional_up_stroke_time","mean_up_stroke_amplitude","mean_down_stroke_amplitude","up_stroke_amplitude_variance","down_stroke_amplitude_variance","up_to_down_amplitude_ratio","fractional_up_stroke_amplitude")
+
+  breath_features <- breath_features[csi_start_index:csi_end_index,]
+
+
+  heart_features <- data$heart_features
+  heart_features <- data.frame(heart_features)
+
+  heart_features <- heart_features %>%
+    mutate(heart_features = substr(heart_features, 2, nchar(heart_features) - 1)) %>%
+    mutate(heart_features = strsplit(heart_features, " ")) %>%
+    mutate(heart_features = lapply(heart_features, function(x) as.numeric(x)))
+
+  heart_features <- data.frame(matrix(unlist(heart_features$heart_features), ncol = 19, byrow = TRUE))
+  colnames(heart_features) <- c("instantaneous_peak_rate","instantaneous_valley_rate","mean_peak_rate_over_window","mean_valley_rate_over_window","fft_rate_over_window","variance_of_peak_rate_in_window","variance_of_valley_rate_in_window","mean_up_stroke_length","mean_down_stroke_length","up_stroke_length_variance","down_stroke_length_variance","up_to_down_length_ratio","fractional_up_stroke_time","mean_up_stroke_amplitude","mean_down_stroke_amplitude","up_stroke_amplitude_variance","down_stroke_amplitude_variance","up_to_down_amplitude_ratio","fractional_up_stroke_amplitude")
+
+  heart_features <- heart_features[csi_start_index:csi_end_index,]
+
+  # get the error and absolute error for breathing and heart rate
+  breath_results <- cbind(breath_features$fft_rate_over_window, breath_features$mean_peak_rate_over_window, gt_breathing_rate)
+  colnames(breath_results) <- c("fft_rate_over_window", "mean_peak_rate_over_window", "gt_breathing_rate", "time")
+  heart_results <- cbind(heart_features$fft_rate_over_window, heart_features$mean_peak_rate_over_window, gt_heart_rate)
+  colnames(heart_results) <- c("fft_rate_over_window", "mean_peak_rate_over_window", "gt_heart_rate", "time")
+
+  breath_results <- breath_results %>%
+    mutate(fft_error = fft_rate_over_window - gt_breathing_rate,
+           abs_fft_error = abs(fft_rate_over_window - gt_breathing_rate),
+           error = mean_peak_rate_over_window - gt_breathing_rate,
+           abs_error = abs(mean_peak_rate_over_window - gt_breathing_rate))
+
+  heart_results <- heart_results %>%
+    mutate(fft_error = fft_rate_over_window - gt_heart_rate,
+           abs_fft_error = abs(fft_rate_over_window - gt_heart_rate),
+           error = mean_peak_rate_over_window - gt_heart_rate,
+           abs_error = abs(mean_peak_rate_over_window - gt_heart_rate))
+
+  # plot the results
+  to_plot <- breath_results %>% select(fft_error, abs_fft_error, error, abs_error) %>% pivot_longer(cols = everything(), names_to = "error_type", values_to = "values") %>% group_by(error_type)
+  p <- to_plot %>% ggplot() +
+    geom_violin(aes(values, error_type, fill = error_type)) +
+    theme_light()+
+    labs(title = "Breathing rate estimation errors")+
+    xlab("Error (in bpm)")+
+    theme(legend.position = "none",
+          axis.title.y = element_blank(),
+          axis.text.y = element_text())+
+    scale_y_discrete(labels=c("absolute peak rate error", "absolute fft rate error", "peak rate error", "fft rate error"))
+  print(p)
+
+  # print the summary
+  to_plot %>% summarise(
+    minimum = min(values),
+    mean = mean(values),
+    median = median(values),
+    maximum = max(values)) %>% print()
+
+  # plot the results
+  to_plot <-  heart_results %>% select(fft_error, abs_fft_error, error, abs_error) %>% pivot_longer(cols = everything(), names_to = "error_type", values_to = "values") %>% group_by(error_type)
+  p <- to_plot %>% ggplot() +
+    geom_violin(aes(values, error_type, fill = error_type)) +
+    theme_light()+
+    labs(title = "Heart rate estimation errors")+
+    xlab("Error (in bpm)")+
+    theme(legend.position = "none",
+          axis.title.y = element_blank(),
+          axis.text.y = element_text())+
+    scale_y_discrete(labels=c("absolute peak rate error", "absolute fft rate error", "peak rate error", "fft rate error"))
+  print(p)
+
+  # print the summary
+  to_plot %>% summarise(
+    minimum = min(values),
+    mean = mean(values),
+    median = median(values),
+    maximum = max(values)) %>% print()
+}
+
+```
+
+# Comparison plots showing all conditions
+```{r comparison, echo=FALSE}
+data <- data_with_sources
+breath_features <- data$breath_features
+breath_features <- data.frame(breath_features)
+
+breath_features <- breath_features %>%
+  mutate(breath_features = substr(breath_features, 2, nchar(breath_features) - 1)) %>%
+  mutate(breath_features = strsplit(breath_features, " ")) %>%
+  mutate(breath_features = lapply(breath_features, function(x) as.numeric(x)))
+
+breath_features <- data.frame(matrix(unlist(breath_features$breath_features), ncol = 19, byrow = TRUE))
+colnames(breath_features) <- c("instantaneous_peak_rate","instantaneous_valley_rate","mean_peak_rate_over_window","mean_valley_rate_over_window","fft_rate_over_window","variance_of_peak_rate_in_window","variance_of_valley_rate_in_window","mean_up_stroke_length","mean_down_stroke_length","up_stroke_length_variance","down_stroke_length_variance","up_to_down_length_ratio","fractional_up_stroke_time","mean_up_stroke_amplitude","mean_down_stroke_amplitude","up_stroke_amplitude_variance","down_stroke_amplitude_variance","up_to_down_amplitude_ratio","fractional_up_stroke_amplitude")
+breath_features <- breath_features %>% mutate(filename = data$filename)
+
+length(unique(data$filename))
+unique(data$filename)[2:length(unique(data$filename))]
+b <- breath_features[csi_start_index:csi_end_index, ]
+for(name in unique(data$filename)[2:length(unique(data$filename))]){
+  s <- which(breath_features$filename==name)[1] + csi_start_index
+  e <- which(breath_features$filename==name)[1] + csi_end_index
+  b <- rbind(b, breath_features[s:e,])
+}
+
+breath_features <- b
+
+
+heart_features <- data$heart_features
+heart_features <- data.frame(heart_features)
+
+heart_features <- heart_features %>%
+  mutate(heart_features = substr(heart_features, 2, nchar(heart_features) - 1)) %>%
+  mutate(heart_features = strsplit(heart_features, " ")) %>%
+  mutate(heart_features = lapply(heart_features, function(x) as.numeric(x)))
+
+heart_features <- data.frame(matrix(unlist(heart_features$heart_features), ncol = 19, byrow = TRUE))
+colnames(heart_features) <- c("instantaneous_peak_rate","instantaneous_valley_rate","mean_peak_rate_over_window","mean_valley_rate_over_window","fft_rate_over_window","variance_of_peak_rate_in_window","variance_of_valley_rate_in_window","mean_up_stroke_length","mean_down_stroke_length","up_stroke_length_variance","down_stroke_length_variance","up_to_down_length_ratio","fractional_up_stroke_time","mean_up_stroke_amplitude","mean_down_stroke_amplitude","up_stroke_amplitude_variance","down_stroke_amplitude_variance","up_to_down_amplitude_ratio","fractional_up_stroke_amplitude")
+
+heart_features <- heart_features %>% mutate(filename = data$filename)
+
+b <- heart_features[csi_start_index:csi_end_index, ]
+for(name in unique(data$filename)[2:length(unique(data$filename))]){
+  s <- which(heart_features$filename==name)[1] + csi_start_index
+  e <- which(heart_features$filename==name)[1] + csi_end_index
+  b <- rbind(b, heart_features[s:e,])
+}
+
+heart_features <- b
+
+gt_b <- gt_breathing_rate
+for(name in unique(data$filename)[2:length(unique(data$filename))]){
+  gt_b <- rbind(gt_b, gt_breathing_rate)
+}
+# get the error and absolute error for breathing and heart rate
+breath_results <- cbind(breath_features$filename, breath_features$fft_rate_over_window, breath_features$mean_peak_rate_over_window, gt_b)
+colnames(breath_results) <- c("filename", "fft_rate_over_window", "mean_peak_rate_over_window", "gt_breathing_rate", "time")
+
+gt_b <- gt_heart_rate
+for(name in unique(data$filename)[2:length(unique(data$filename))]){
+  gt_b <- rbind(gt_b, gt_heart_rate)
+}
+heart_results <- cbind(heart_features$filename, heart_features$fft_rate_over_window, heart_features$mean_peak_rate_over_window, gt_b)
+colnames(heart_results) <- c("filename", "fft_rate_over_window", "mean_peak_rate_over_window", "gt_heart_rate", "time")
+
+breath_results <- breath_results %>%
+  mutate(fft_error = fft_rate_over_window - gt_breathing_rate,
+         abs_fft_error = abs(fft_rate_over_window - gt_breathing_rate),
+         error = mean_peak_rate_over_window - gt_breathing_rate,
+         abs_error = abs(mean_peak_rate_over_window - gt_breathing_rate))
+
+heart_results <- heart_results %>%
+  mutate(fft_error = fft_rate_over_window - gt_heart_rate,
+         abs_fft_error = abs(fft_rate_over_window - gt_heart_rate),
+         error = mean_peak_rate_over_window - gt_heart_rate,
+         abs_error = abs(mean_peak_rate_over_window - gt_heart_rate))
+
+# plot the results
+to_plot <- breath_results %>% select(fft_error, abs_fft_error, error, abs_error, filename) %>% pivot_longer(cols = c("fft_error", "abs_fft_error", "error", "abs_error"), names_to = "error_type", values_to = "values") %>% group_by(filename, error_type)
+to_plot %>% ggplot() +
+  geom_violin(aes(x=error_type, y=values, fill = filename)) +
+  theme_light()+
+  labs(title = "Breathing rate estimation errors",
+       fill = "Condition")+
+  ylab("Error (in bpm)")+
+  theme(axis.title.x = element_blank(),
+        axis.text.x = element_text(),
+        legend.position = c(0.18, 0.15))+
+  scale_x_discrete(labels=c("absolute peak rate error", "absolute fft rate error", "peak rate error", "fft rate error"))
+  
+
+# print the summary
+to_plot %>% summarise(
+  minimum = min(values),
+  mean = mean(values),
+  median = median(values),
+  maximum = max(values))
+
+# plot the results
+to_plot <-  heart_results %>% select(fft_error, abs_fft_error, error, abs_error, filename) %>% pivot_longer(cols = c("fft_error", "abs_fft_error", "error", "abs_error"), names_to = "error_type", values_to = "values") %>% group_by(filename, error_type)
+to_plot %>% ggplot() +
+  geom_violin(aes(error_type, values, fill = filename)) +
+  theme_light()+
+  labs(title = "Heart rate estimation errors",
+       fill = "Condition")+
+  ylab("Error (in bpm)")+
+  theme(axis.title.x = element_blank(),
+        axis.text.x = element_text(),
+        legend.position = c(0.18, 0.15))+
+  scale_x_discrete(labels=c("absolute peak rate error", "absolute fft rate error", "peak rate error", "fft rate error"))
+
+
+# print the summary
+to_plot %>% summarise(
+  minimum = min(values),
+  mean = mean(values),
+  median = median(values),
+  maximum = max(values))
+
+
+```
+
+# Visualization
+
+```{r visualization comparison, echo=FALSE}
+gt_ecg <- gt_ecg %>% mutate(time = row_number()/256)%>% select(time, everything())
+gt_breath <- gt_breath %>% mutate(time = row_number()/256)%>% select(time, everything())
+data <- data_with_sources
+
+visualization_data <- data %>% select(fused_heart_amplitude, fused_breath_amplitude, filtered_heart, filtered_breath, filename)
+
+b <- visualization_data[csi_start_index:csi_end_index, ]
+b <- b %>% mutate(time = row_number()/50)
+
+for(name in unique(data$filename)[2:length(unique(data$filename))]){
+  s <- which(visualization_data$filename==name)[1] + csi_start_index
+  e <- which(visualization_data$filename==name)[1] + csi_end_index
+  temp <- visualization_data[s:e, ]
+  temp <- na.omit(temp)
+  temp <- temp %>% mutate(time = row_number()/50)
+  b <- rbind(b, temp)
+}
+
+breath_viz <- b
+
+breath <- zoo(as.integer(gt_breath$breath), as.POSIXct(gt_breath$time, "UTC", origin = "1970-01-01"))
+breath_viz <- b[b$filename==unique(data$filename)[1],]
+filtered_breath <- zoo(as.double(breath_viz$filtered_breath), as.POSIXct(breath_viz$time, "UTC", origin = "1970-01-01"))
+eventData <- cbind(ecg, filtered_breath)
+for(name in unique(data$filename)[2:length(unique(data$filename))]){
+  breath_viz <- b[b$filename==name,]
+  filtered_breath <- zoo(as.double(breath_viz$filtered_breath), as.POSIXct(breath_viz$time, "UTC", origin = "1970-01-01"))
+  eventData <- cbind(eventData, filtered_breath)
+}
+
+e <- length(unique(data$filename))+1
+colnames(eventData) <- paste0("value_", 1:e)
+eventData <- na.locf(eventData)
+
+dygraph(eventData) %>% 
+  dyOptions(drawGrid = F) %>%
+  dyAxis("y", label = "Breathing ground truth", independentTicks = TRUE) %>%
+  dyAxis("y2", label = "Filtered breathing amplitude", independentTicks = TRUE) %>%
+  dySeries("value_1", label=" breath", axis=('y')) %>%
+  dySeries("value_2", axis=('y2')) %>%
+  dySeries("value_3", axis=('y2'))
+
+
+
+ecg <- zoo(as.integer(gt_ecg$ecg), as.POSIXct(gt_ecg$time, "UTC", origin = "1970-01-01"))
+heart_viz <- b[b$filename==unique(data$filename)[1],]
+filtered_heart <- zoo(as.double(heart_viz$filtered_heart), as.POSIXct(heart_viz$time, "UTC", origin = "1970-01-01"))
+eventData <- cbind(ecg, filtered_heart)
+for(name in unique(data$filename)[2:length(unique(data$filename))]){
+  heart_viz <- b[b$filename==name,]
+  filtered_heart <- zoo(as.double(heart_viz$filtered_heart), as.POSIXct(heart_viz$time, "UTC", origin = "1970-01-01"))
+  eventData <- cbind(eventData, filtered_heart)
+}
+
+e <- length(unique(data$filename))+1
+colnames(eventData) <- paste0("value_", 1:e)
+eventData <- na.locf(eventData)
+
+
+dygraph(eventData) %>% 
+  dyOptions(drawGrid = F) %>%
+  dyAxis("y", label = "ECG Voltage", independentTicks = TRUE) %>%
+  dyAxis("y2", label = "Filtered heart amplitude", independentTicks = TRUE) %>%
+  dySeries("value_1", label=" ecg", axis=('y')) %>%
+  dySeries("value_2", axis=('y2')) %>%
+  dySeries("value_3", axis=('y2'))
+
+```
+
+
+# Sleep staging performance
+```{r TODO}
+library(cvms)
+library(broom)    
+library(tibble)   
+library(ggimage)   
+#> Loading required package: ggplot2
+library(rsvg)   
+# 
+# predictions = data$sleep_stage_classification
+# targets = read_csv("../../data/testing/ground_truth/ss.txt", skip = 7, col_types = cols("d"))
+# 
+# 
+# ## TODO !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+# set.seed(1)
+# d_multi <- tibble("target" = floor(runif(100) * 5),
+#                   "prediction" = floor(runif(100) * 5))
+# conf_mat <- confusion_matrix(targets = d_multi$target,
+#                              predictions = d_multi$prediction)
+# 
+# plot_confusion_matrix(
+#   conf_mat,
+#   add_counts = TRUE,
+#   add_normalized = TRUE,
+#   counts_on_top = TRUE,
+#   add_sums = TRUE,
+#   diag_percentages_only = TRUE,
+#   sums_settings = sum_tile_settings(
+#     palette = "Oranges",
+#     label = "Total"
+#   )
+# )
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
