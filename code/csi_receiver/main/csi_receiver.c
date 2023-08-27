@@ -182,6 +182,10 @@ DumbRunningMean fused_heart_mean;
 DumbRunningMean fused_breath_mean;
 int previous_subcarrier_selection_timestamp = 0;
 
+#ifdef CONFIG_PERFORM_OUTLIER_FILTERING
+HampelFilter hampel_filters[NUMBER_SUBCARRIERS];
+#endif
+
 #ifdef CONFIG_MRC_PCA_ON_TIMER
     bool do_not_run_mrc_on_timer = false;
 #endif
@@ -862,10 +866,18 @@ static void csi_processing_task(void *arg)
             //     continue;
             // }
             amplitude[i] = sqrt(pow(info->buf[i*2 + 0], 2) + pow(info->buf[i*2 + 1], 2));
+
             if(first_run){
+#ifdef CONFIG_PERFORM_OUTLIER_FILTERING
+                initialize_hampel_filter(&hampel_filters[i], CONFIG_HAMPEL_WINDOW_SIZE);
+                amplitude[i] = delayed_hampel_filter(&hampel_filters[i], amplitude[i]);
+#endif
                 dumb_running_mean_initialize(&subcarrier_amplitude_means[i], MAX_NUMBER_OF_SAMPLES_KEPT);
                 dumb_running_mean_append(&subcarrier_amplitude_means[i], amplitude[i], rx_ctrl->timestamp, MAX_NUMBER_OF_SAMPLES_KEPT);
             }else{
+#ifdef CONFIG_PERFORM_OUTLIER_FILTERING
+                amplitude[i] = delayed_hampel_filter(&hampel_filters[i], amplitude[i]);
+#endif
                 dumb_running_mean_append(&subcarrier_amplitude_means[i], amplitude[i], rx_ctrl->timestamp, MAX_NUMBER_OF_SAMPLES_KEPT);
             }
             sum = sum + amplitude[i];

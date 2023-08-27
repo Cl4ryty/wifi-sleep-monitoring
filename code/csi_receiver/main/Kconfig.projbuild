@@ -20,6 +20,19 @@ menu "CSI Receiver Configuration"
         help
             The time range of samples kept for processing in seconds.
 
+    config PERFORM_OUTLIER_FILTERING
+        bool "Perform outlier filtering"
+        default true
+        help
+            Whether to filter outliers in the CSI amplitude using a Hampel filter.
+
+    config HAMPEL_WINDOW_SIZE
+        depends on PERFORM_OUTLIER_FILTERING
+        int "Hampel filter window size"
+        default 3
+        help
+            The number of samples on each side of the current sample that are considered in the hampel filter.
+
     config REMOVE_STATIC_COMPONENT
         bool "Remove static component"
         default true

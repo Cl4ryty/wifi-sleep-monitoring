@@ -550,3 +550,63 @@ void get_best_thresholds(float *stis, char *ids, int length, float *t_presence, 
     *f_small_movement = max_f1_small_movement;
     *f_large_movement = max_f1_large_movement;
 }
+
+
+void initialize_hampel_filter(HampelFilter *f, unsigned window_size){
+    f->window_size = window_size;
+    f->window = malloc_or_die(sizeof(float)*(2*window_size +1));
+    f->number_of_samples = 0;
+    f->current_last_index = -1;
+    f->current_center_index = window_size-1;
+}
+
+int float_compare(const void *x, const void *y){
+    float a = *((float*)x);
+    float b = *((float*)y);
+    if(a<b){
+        return -1;
+    }
+    if(a>b){
+        return 1;
+    }
+    return 0;
+}
+
+float delayed_hampel_filter(HampelFilter *f, float input){
+    f->current_last_index = get_next_index(f->current_last_index, f->window_size*2+1);
+    f->window[f->current_last_index] = input;
+
+    if(f->number_of_samples < (2 * f->window_size)){
+        f->number_of_samples++;
+        return input;
+    }else{
+        f->current_center_index = get_next_index(f->current_center_index, f->window_size*2+1);
+        float *to_sort = malloc_or_die(sizeof(float) * (2*f->window_size+1));
+        memcpy(to_sort, f->window, sizeof(float)*(2*f->window_size+1));
+        qsort(to_sort, 2*f->window_size+1, sizeof(float), float_compare);
+
+        // length of window is always odd, median is the value that is in the middle
+        float median = to_sort[f->window_size];
+        float absolute_deviation = fabs(f->window[f->current_center_index] - median);
+
+        // get the absolute deviations
+        for(int i=0; i<(2*f->window_size+1); i++){
+            to_sort[i] = fabs(f->window[i] - median);
+        }
+
+        // get the MAD
+        qsort(to_sort, 2*f->window_size+1, sizeof(float), float_compare);
+        float MAD = to_sort[f->window_size];
+
+        free(to_sort);
+
+        // check if it's an outlier
+        if(absolute_deviation > 3*1.4826*MAD){
+            f->window[f->current_center_index] = median;
+            return median;
+        }else{
+            return f->window[f->current_center_index];
+        }
+
+    }
+}

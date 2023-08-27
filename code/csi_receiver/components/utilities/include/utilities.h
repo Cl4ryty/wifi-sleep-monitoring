@@ -145,6 +145,17 @@ typedef struct
     float *list;
 }ListFloat;
 
+typedef struct
+{
+    unsigned window_size;
+    float* window;
+    unsigned number_of_samples;
+    unsigned current_last_index;
+    unsigned current_center_index;
+}HampelFilter;
+
+
+
 
 void *malloc_or_die(size_t size_to_allocate);
 
@@ -213,3 +224,9 @@ void poi_list_append(POI_List *poi_list, POI *poi);
 void calculate_variance_features(Features *f, POI_List *pois);
 
 void get_best_thresholds(float *stis, char *ids, int length, float *t_presence, float *t_small_movement, float *t_large_movement, float *f_presence, float *f_small_movement, float *f_large_movement);
+
+void initialize_hampel_filter(HampelFilter *f, unsigned window_size);
+
+int float_compare(const void *x, const void *y);
+
+float delayed_hampel_filter(HampelFilter *f, float input);

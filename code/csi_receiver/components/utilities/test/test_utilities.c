@@ -248,14 +248,14 @@ TEST_CASE("test calculate_variance_features zero var", "[variance]")
         poi_list_initialize(&pois, 20);
 
         POI poi;
-        poi_initialize(&poi, true, 1000000, 1, 0);
+        poi_initialize(&poi, true, 1000000, 1, 0, 1);
         poi_list_append(&pois, &poi);
         for(int i=1; i<9; i++){
                 POI poi;
                 if(i%2==0){
-                        poi_initialize(&poi, true, 1000000, 1, i);
+                        poi_initialize(&poi, true, 1000000, 1, i, 1);
                 }else{
-                        poi_initialize(&poi, false, 1000000, -1, i);
+                        poi_initialize(&poi, false, 1000000, -1, i, 1);
                 }
                 poi_list_append(&pois, &poi);
         }
@@ -279,14 +279,14 @@ TEST_CASE("test calculate_variance_features zero var", "[variance]")
 
         poi_list_initialize(&pois, 20);
 
-        poi_initialize(&poi, false, 1000000, -1, 0);
+        poi_initialize(&poi, false, 1000000, -1, 0, 1);
         poi_list_append(&pois, &poi);
         for(int i=1; i<9; i++){
                 POI poi;
                 if(i%2!=0){
-                        poi_initialize(&poi, false, 1000000, 1, i);
+                        poi_initialize(&poi, false, 1000000, 1, i, 1);
                 }else{
-                        poi_initialize(&poi, true, 1000000, -1, i);
+                        poi_initialize(&poi, true, 1000000, -1, i, 1);
                 }
                 poi_list_append(&pois, &poi);
         }
@@ -317,22 +317,22 @@ TEST_CASE("test calculate_variance_features amplitude var starting with peak", "
         poi_list_initialize(&pois, 20);
 
         POI poi;
-        poi_initialize(&poi, true, 1000000, 1, 0);
+        poi_initialize(&poi, true, 1000000, 1, 0, 1);
         poi_list_append(&pois, &poi);
         for(int i=1; i<7; i++){
                 POI poi;
                 if(i%2==0){
-                        poi_initialize(&poi, true, 1000000, 1, i);
+                        poi_initialize(&poi, true, 1000000, 1, i, 1);
                 }else{
-                        poi_initialize(&poi, false, 1000000, -1, i);
+                        poi_initialize(&poi, false, 1000000, -1, i, 1);
                 }
                 poi_list_append(&pois, &poi);
         }
-        poi_initialize(&poi, false, 1000000, -11, 7);
+        poi_initialize(&poi, false, 1000000, -11, 7, 1);
         poi_list_append(&pois, &poi);
-        poi_initialize(&poi, true, 1000000, 11, 8);
+        poi_initialize(&poi, true, 1000000, 11, 8, 1);
         poi_list_append(&pois, &poi);
-        poi_initialize(&poi, false, 1000000, -1, 9);
+        poi_initialize(&poi, false, 1000000, -1, 9, 1);
         poi_list_append(&pois, &poi);
 
         features.mean_peak_rate_over_window.current_mean = 60.0;
@@ -363,22 +363,22 @@ TEST_CASE("test calculate_variance_features amplitude var starting with valley",
         poi_list_initialize(&pois, 20);
 
         POI poi;
-        poi_initialize(&poi, false, 1000000, 1, 0);
+        poi_initialize(&poi, false, 1000000, 1, 0, 1);
         poi_list_append(&pois, &poi);
         for(int i=1; i<7; i++){
                 POI poi;
                 if(i%2==0){
-                        poi_initialize(&poi, false, 1000000, 1, i);
+                        poi_initialize(&poi, false, 1000000, 1, i, 1);
                 }else{
-                        poi_initialize(&poi, true, 1000000, -1, i);
+                        poi_initialize(&poi, true, 1000000, -1, i, 1);
                 }
                 poi_list_append(&pois, &poi);
         }
-        poi_initialize(&poi, true, 1000000, -11, 7);
+        poi_initialize(&poi, true, 1000000, -11, 7, 1);
         poi_list_append(&pois, &poi);
-        poi_initialize(&poi, false, 1000000, 11, 8);
+        poi_initialize(&poi, false, 1000000, 11, 8, 1);
         poi_list_append(&pois, &poi);
-        poi_initialize(&poi, true, 1000000, -1, 9);
+        poi_initialize(&poi, true, 1000000, -1, 9, 1);
         poi_list_append(&pois, &poi);
 
         features.mean_peak_rate_over_window.current_mean = 60.0;
@@ -415,7 +415,7 @@ TEST_CASE("test features", "[features]")
         dumb_running_mean_initialize(&features.mean_down_stroke_amplitude, 30);
 
         POI poi;
-        poi_initialize(&poi, 1, 31080133, 9.693646, 1125);
+        poi_initialize(&poi, 1, 31080133, 9.693646, 1125, 1);
         poi_list_append(&pois, &poi);
         ESP_LOGI("added", "poi");
 
@@ -432,7 +432,7 @@ TEST_CASE("test features", "[features]")
 
 
         POI poi1;
-        poi_initialize(&poi1, 0, 10744651, 10.558222, 36);
+        poi_initialize(&poi1, 0, 10744651, 10.558222, 36, 1);
         poi_list_append(&pois, &poi1);
         ESP_LOGI("added", "poi1");
         timestamp += 10744651;
@@ -455,7 +455,7 @@ TEST_CASE("test features", "[features]")
 
 
         POI poi2;
-        poi_initialize(&poi2, 1, 5228664, 1.002261, 236);
+        poi_initialize(&poi2, 1, 5228664, 1.002261, 236, 1);
         poi_list_append(&pois, &poi2);
         ESP_LOGI("added", "poi2");
         timestamp += 5228664;
@@ -471,7 +471,7 @@ TEST_CASE("test features", "[features]")
 
 
         POI poi3;
-        poi_initialize(&poi3, 0, 1766116, 0.261949, 304);
+        poi_initialize(&poi3, 0, 1766116, 0.261949, 304, 1);
         poi_list_append(&pois, &poi3);
         ESP_LOGI("added", "poi3");
         timestamp += 1766116;
@@ -494,7 +494,7 @@ TEST_CASE("test features", "[features]")
 
 
         POI poi4;
-        poi_initialize(&poi4, 1, 120532267, 2.935997, 368);
+        poi_initialize(&poi4, 1, 120532267, 2.935997, 368, 1);
         poi_list_append(&pois, &poi4);
         ESP_LOGI("added", "poi4");
         timestamp += 120532267;
@@ -536,7 +536,10 @@ TEST_CASE("ts", "[ts]")
         float t_presence = -1;
         float t_small_movement = -1;
         float t_large_movement = -1;
-        get_best_thresholds(&stis, &ids, 1000, &t_presence, &t_small_movement, &t_large_movement);
+        float f_presence = -1;
+        float f_small_movement = -1;
+        float f_large_movement = -1;
+        get_best_thresholds(&stis, &ids, 1000, &t_presence, &t_small_movement, &t_large_movement, &f_presence, &f_small_movement, &f_large_movement);
         ESP_LOGI("t", "got thresholds %f, %f, %f", t_presence, t_small_movement, t_large_movement);
 
         TEST_ASSERT_EQUAL_FLOAT(0.4, t_presence);
@@ -553,7 +556,10 @@ TEST_CASE("ts 1", "[ts]")
         float t_presence = -1;
         float t_small_movement = -1;
         float t_large_movement = -1;
-        get_best_thresholds(&stis, &ids, 1000, &t_presence, &t_small_movement, &t_large_movement);
+        float f_presence = -1;
+        float f_small_movement = -1;
+        float f_large_movement = -1;
+        get_best_thresholds(&stis, &ids, 1000, &t_presence, &t_small_movement, &t_large_movement, &f_presence, &f_small_movement, &f_large_movement);
         ESP_LOGI("t", "got thresholds %f, %f, %f", t_presence, t_small_movement, t_large_movement);
 
         TEST_ASSERT_EQUAL_FLOAT(0.4, t_presence);
@@ -570,7 +576,10 @@ TEST_CASE("ts no activity 4", "[ts]")
         float t_presence = -1;
         float t_small_movement = -1;
         float t_large_movement = -1;
-        get_best_thresholds(&stis, &ids, 941, &t_presence, &t_small_movement, &t_large_movement);
+        float f_presence = -1;
+        float f_small_movement = -1;
+        float f_large_movement = -1;
+        get_best_thresholds(&stis, &ids, 941, &t_presence, &t_small_movement, &t_large_movement, &f_presence, &f_small_movement, &f_large_movement);
         ESP_LOGI("t", "got thresholds %f, %f, %f", t_presence, t_small_movement, t_large_movement);
 
         TEST_ASSERT_EQUAL_FLOAT(0.55, t_presence);
@@ -587,10 +596,25 @@ TEST_CASE("ts no activity 2", "[ts]")
         float t_presence = -1;
         float t_small_movement = -1;
         float t_large_movement = -1;
-        get_best_thresholds(&stis, &ids, 533, &t_presence, &t_small_movement, &t_large_movement);
+        float f_presence = -1;
+        float f_small_movement = -1;
+        float f_large_movement = -1;
+        get_best_thresholds(&stis, &ids, 533, &t_presence, &t_small_movement, &t_large_movement, &f_presence, &f_small_movement, &f_large_movement);
         ESP_LOGI("t", "got thresholds %f, %f, %f", t_presence, t_small_movement, t_large_movement);
 
         TEST_ASSERT_EQUAL_FLOAT(0.45, t_presence);
         TEST_ASSERT_EQUAL_FLOAT(0.45, t_small_movement);
         TEST_ASSERT_EQUAL_FLOAT(0.65, t_large_movement);   
+}
+
+TEST_CASE("delayed hampel filter", "[hampel]")
+{
+        float values[] = {7.0, 6.0, 3.5, 8.5, 4.0, 6.5, 8.0, 5.0, 4.7, 3.8, 5.5, 35.4, 8.0, 4.9, 6.3, 7.2};
+        float result[] = {7.0, 6.0, 3.5, 8.5, 4.0, 6.5, 8.5, 4.0, 6.5, 8.0, 5.0, 4.7, 3.8, 5.5, 5.5, 8.0};
+
+        HampelFilter h;
+        initialize_hampel_filter(&h, 3);
+        for(int i=0; i<16; i++){
+                TEST_ASSERT_EQUAL_FLOAT(result[i], delayed_hampel_filter(&h, values[i]));
+        } 
 }
