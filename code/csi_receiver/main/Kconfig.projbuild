@@ -67,6 +67,13 @@ menu "CSI Receiver Configuration"
             help
                 Whether to perform MRC-PCA every X seconds as if on a timer.
 
+    config MRC_PCA_USE_SCALAR
+        depends on !SUBCARRIER_SELECTION_INSTEAD_OF_FUSION
+        bool "MRC-PCA use scalar"
+        default true
+        help
+            Whether to scale the MRC-PCA components.
+
     config MRC_PCA_EVERY_X_SECONDS
         depends on MRC_PCA_ON_TIMER && !SUBCARRIER_SELECTION_INSTEAD_OF_FUSION
         int "MRC-PCA every x seconds"
@@ -97,6 +104,12 @@ menu "CSI Receiver Configuration"
         range 0 1000
         help
             Minimum interval (in seconds) after which MRC-PCA can be performed again.
+
+    config ENABLE_PEAK_VALLEY_AMPLITUDE_CRITERIUM
+        bool "Enable peak/valley amplitude criterium"
+        default true
+        help
+            Whether discard potential peaks/valleys due to a too large amplitude difference compared to previous POIs.
 
     config RUN_INFERENCE
         bool "Run inference"

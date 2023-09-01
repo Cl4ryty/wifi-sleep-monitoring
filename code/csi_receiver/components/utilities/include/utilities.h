@@ -199,6 +199,8 @@ void bandpass_filter_initialize(BandpassIIRFilter *f, float *b_coefficients, flo
 
 void bandpass_filter_apply(BandpassIIRFilter *f, float input);
 
+void bandpass_filter_free(BandpassIIRFilter *f);
+
 void running_mean_initialize(RunningMean *r, float input, int input_index, unsigned *time_array, float *value_array, int array_size);
 
 void running_mean_append(RunningMean *r, float input, unsigned input_timestamp, unsigned window_size);

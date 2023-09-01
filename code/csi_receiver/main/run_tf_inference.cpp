@@ -4,6 +4,7 @@
 
 #include "run_tf_inference.h"
 #include "model.h"
+#define MODEL_STEPS 64
 
 namespace {
 const tflite::Model* model = nullptr;
@@ -12,7 +13,7 @@ TfLiteTensor* input = nullptr;
 TfLiteTensor* output = nullptr;
 
 // allocate memory for tensorflow (statically)
-const int tensor_arena_size = 20 * 1024;
+const int tensor_arena_size = 40 * 1024;
 uint8_t tensor_arena[tensor_arena_size];
 }
 
@@ -26,14 +27,37 @@ extern "C" void model_setup(){
     }
 
     // instantiate the operations resolver which is used to register and access the operations used by the model
-    static tflite::MicroMutableOpResolver<2> resolver;
+    static tflite::MicroMutableOpResolver<9> resolver;
     if (resolver.AddFullyConnected() != kTfLiteOk) {
         return;
     }
     if (resolver.AddSoftmax() != kTfLiteOk) {
         return;
     }
-
+    // things for CNN
+    if (resolver.AddPad() != kTfLiteOk) {
+        return;
+    }
+    if (resolver.AddExpandDims() != kTfLiteOk) {
+        return;
+    }
+    if (resolver.AddConv2D() != kTfLiteOk) {
+        return;
+    }
+    if (resolver.AddReshape() != kTfLiteOk) {
+        return;
+    }
+    if (resolver.AddMaxPool2D() != kTfLiteOk) {
+        return;
+    }
+    // things for LSTM
+    if (resolver.AddUnidirectionalSequenceLSTM() != kTfLiteOk) {
+        return;
+    }
+    if (resolver.AddStridedSlice() != kTfLiteOk) {
+        return;
+    }
+    
 
 
     static tflite::MicroInterpreter static_interpreter(model, resolver, tensor_arena, tensor_arena_size);
@@ -54,19 +78,19 @@ extern "C" void model_setup(){
 }
 
 extern "C" int run_inference(float* input_values){
-    printf("starting inference\n");
+    // printf("starting inference\n");
     // set the input values
-    for (int i = 0; i < 42; i++) {
+    for (int i = 0; i < MODEL_STEPS*42; i++) {
         input->data.f[i] = input_values[i];
     }
-    printf("set inputs, invoking now\n");
+    // printf("set inputs, invoking now\n");
 
     // run the model
     TfLiteStatus invoke_status = interpreter->Invoke();
     if (invoke_status != kTfLiteOk) {
-        printf("Invoke failed\n");
+        //printf("Invoke failed\n");
     }
-    printf("Invoke done, getting outputs\n");
+    // printf("Invoke done, getting outputs\n");
 
     TfLiteTensor* output = interpreter->output(0);
     
@@ -79,7 +103,7 @@ extern "C" int run_inference(float* input_values){
             max_index = i;
         }
     }
-    printf("input[0] %f, output[0] %f, output[1] %f, output[2] %f, output[3] %f, output[4] %f, output[5] %f\n", input_values[0], output->data.f[1], output->data.f[2], output->data.f[3], output->data.f[4], output->data.f[5]);
+    // printf("input[0] %f, output[0] %f, output[1] %f, output[2] %f, output[3] %f, output[4] %f, output[5] %f\n", input_values[0], output->data.f[1], output->data.f[2], output->data.f[3], output->data.f[4], output->data.f[5]);
 
     return max_index;
 }

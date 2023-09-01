@@ -190,6 +190,12 @@ void bandpass_filter_apply(BandpassIIRFilter *f, float input){
     f->last_inputs[index] = input;
 }
 
+void bandpass_filter_free(BandpassIIRFilter *f){
+    free(f->last_inputs);
+    free(f->last_outputs);
+    f = NULL;
+}
+
 void running_mean_initialize(RunningMean *r, float input, int input_index, unsigned *time_array, float *value_array, int array_size){
     r->last_sample_index = input_index;
     r->time_array = time_array;
@@ -201,7 +207,7 @@ void running_mean_initialize(RunningMean *r, float input, int input_index, unsig
 }
 
 void running_mean_append(RunningMean *r, float input, unsigned input_timestamp, unsigned window_size){
-    // check if the last sample fell out of the time frame and remove in necessary
+    // check if the last sample fell out of the time frame and remove if necessary
     while(r->current_number_of_elements > 0 && (input_timestamp - r->time_array[r->last_sample_index] > window_size)){
         r->current_sum -= r->value_array[r->last_sample_index];
         r->current_number_of_elements -= 1;
@@ -224,7 +230,7 @@ void dumb_running_mean_initialize(DumbRunningMean *r, int array_size){
 }
 
 void dumb_running_mean_append(DumbRunningMean *r, float input, unsigned input_timestamp, unsigned window_size){
-    // check if the last sample fell out of the time frame and remove in necessary
+    // check if the last sample fell out of the time frame and remove if necessary
     while(r->current_number_of_elements > 0 && (input_timestamp - r->time_array[r->last_sample_index] > window_size)){
         r->current_sum -= r->value_array[r->last_sample_index];
         r->current_number_of_elements -= 1;
