@@ -20,6 +20,12 @@ menu "CSI Receiver Configuration"
         help
             The time range of samples kept for processing in seconds.
 
+    config CALCULATE_SSNR
+        bool "Calculate SSNR"
+        default true
+        help
+            Whether to calculate SSNR. Only use this to check the signal quality when setting up as it used quite a bit of RAM such that not all other features can be enabled.
+
     config PERFORM_OUTLIER_FILTERING
         bool "Perform outlier filtering"
         default true
@@ -111,11 +117,23 @@ menu "CSI Receiver Configuration"
         help
             Whether discard potential peaks/valleys due to a too large amplitude difference compared to previous POIs.
 
+    config COLLECT_TRAINING_DATA_FOR_NN
+        bool "Collect training data for NN"
+        default true
+        help
+            Whether to collect training data (features) for a NN for performing sleep stage classification in a separate file.
+
     config RUN_INFERENCE
         bool "Run inference"
         default true
         help
             Whether to run inference.
+
+    config NUMBER_OF_SAMPLES_FOR_NN_INPUT
+        int "Number of samples for NN input"
+        default 64
+        help
+            The number of samples of feature vectors to be used as input to the NN.
 
     config START_INFERENCE_AFTER_X_SECONDS
         depends on RUN_INFERENCE
@@ -295,7 +313,14 @@ menu "CSI Receiver Configuration"
                 default true
                 help
                     Whether to print the result of the classification to a file on the SD card (and other outputs if different logging is not enabled).
-    
+
+            config SENSE_PRINT_SSNR_SD
+                depends on CALCULATE_SSNR
+                bool "print SSNR"
+                default true
+                help
+                    Whether to print the maximum SSNR value and corresponding subcarrier to a file on the SD card (and other outputs if different logging is not enabled).
+
         endmenu
         
         menu "Features to log to serial"
@@ -385,6 +410,13 @@ menu "CSI Receiver Configuration"
                 default true
                 help
                     Whether to print the result of the classification to serial.
+
+            config SENSE_PRINT_SSNR_S
+                depends on CALCULATE_SSNR
+                bool "print SSNR"
+                default true
+                help
+                    Whether to print the maximum SSNR value and corresponding subcarrier to serial.
     
         endmenu
 
@@ -475,6 +507,13 @@ menu "CSI Receiver Configuration"
                 default true
                 help
                     Whether to print the result of the classification to UDP broadcast.        
+            
+            config SENSE_PRINT_SSNR_U
+                depends on CALCULATE_SSNR
+                bool "print SSNR"
+                default true
+                help
+                    Whether to print the maximum SSNR value and corresponding subcarrier to UDP broadcast.
         endmenu
         
     endmenu

@@ -34,7 +34,9 @@
 #define EXAMPLE_ESP_WIFI_CHANNEL            CONFIG_ESP_WIFI_CHANNEL
 #define EXAMPLE_MAX_STA_CONN                CONFIG_ESP_MAX_STA_CONN
 
-#if defined(CONFIG_SENSE_LOG_TO_SD) || defined(CONFIG_PROCESS_CSI_FROM_FILE)
+#define COLLECT_SAMPLE_FOR_NN_EVERY_X_SECONDS 0.5
+
+#if defined(CONFIG_SENSE_LOG_TO_SD) || defined(CONFIG_PROCESS_CSI_FROM_FILE) || defined(CONFIG_COLLECT_TRAINING_DATA_FOR_NN)
     // defines for using the sd card
     #define MOUNT_POINT "/sdcard"
 
@@ -53,6 +55,12 @@
 
     char *calibration_file_name;
     FILE *calibration_file;
+
+#ifdef CONFIG_COLLECT_TRAINING_DATA_FOR_NN
+    char *NN_data_file_name;
+    FILE *NN_data_file;
+#endif
+
 
     #define WRITE_FILE_AFTER_RECEIVED_CSI_NUMBER MAX_NUMBER_OF_SAMPLES_KEPT
 #endif
@@ -182,6 +190,7 @@ bool ran_mrc_in_the_beginning = false;
 
 bool button_pressed = false;
 bool discarded_samples = false;
+bool button_was_pressed = false;
 
 int selected_subcarrier = 42; // arbitrarily selected subcarrier to start with until it is selected based on variance
 DumbRunningMean subcarrier_amplitude_means[NUMBER_SUBCARRIERS];
@@ -189,10 +198,16 @@ DumbRunningMean fused_heart_mean;
 DumbRunningMean fused_breath_mean;
 unsigned previous_subcarrier_selection_timestamp = 0;
 
-#define MODEL_STEPS 64
-float data_for_model_input[MODEL_STEPS][42];
-int model_input_current_last_index = -1;
-float model_input_array[MODEL_STEPS][42];
+#define WINDOW_FOR_SSNR_IN_SECONDS 10
+#ifdef CONFIG_CALCULATE_SSNR
+
+float interference_differences[NUMBER_SUBCARRIERS][WINDOW_FOR_SSNR_IN_SECONDS*CSI_RATE];
+int interference_differences_last_index = 0;
+unsigned previous_SSNR_timestamp = 0;
+int calculate_SSNR_every_x_seconds = 10;
+float max_ssnr = 0;
+int max_subcarrier = 0;
+#endif
 
 
 #ifdef CONFIG_PERFORM_OUTLIER_FILTERING
@@ -209,11 +224,17 @@ HampelFilter hampel_filters[NUMBER_SUBCARRIERS];
 
 nvs_handle_t my_handle;
 
-#ifdef CONFIG_RUN_INFERENCE
+#if defined(CONFIG_RUN_INFERENCE) || defined(CONFIG_COLLECT_TRAINING_DATA_FOR_NN)
+#define MODEL_STEPS CONFIG_NUMBER_OF_SAMPLES_FOR_NN_INPUT
+float data_for_model_input[MODEL_STEPS][42];
+int model_input_current_last_index = -1;
+float model_input_array[MODEL_STEPS][42];
+
 unsigned previous_ss_timestamp = 0;
 bool started_inference = false;
 unsigned previous_ss_data_timestamp = 0;
 
+#ifdef CONFIG_RUN_INFERENCE
 void run_sleep_stage_classification(){
     ESP_LOGI(TAG, "run_sleep_stage_classification start");
     heap_caps_print_heap_info(MALLOC_CAP_DEFAULT);
@@ -237,9 +258,50 @@ void run_sleep_stage_classification(){
     
     ESP_LOGI(TAG, "sleep stage classification returned %d", sleep_stage);
 }
-static void collect_data_for_inference_task(){
+
+static void run_inference_task(){
+    vTaskDelay((1000) / portTICK_PERIOD_MS);
     while(true){
-        if(timestamp_array[current_last_element]-previous_ss_data_timestamp >= 500000){
+        if((!started_inference && timestamp_array[current_last_element]-previous_ss_timestamp >= CONFIG_START_INFERENCE_AFTER_X_SECONDS * SECONDS_TO_MICROSECONDS) || (started_inference && timestamp_array[current_last_element]-previous_ss_timestamp >= CONFIG_RUN_INFERENCE_EVERY_X_SECONDS * SECONDS_TO_MICROSECONDS)){
+            started_inference = true;
+            ESP_LOGI(TAG, "running inference, high watermark %d", uxTaskGetStackHighWaterMark(NULL));
+            previous_ss_timestamp = timestamp_array[current_last_element];
+            run_sleep_stage_classification();
+        }
+        // delay 250 ms
+        vTaskDelay((250) / portTICK_PERIOD_MS);
+    }
+}
+#endif
+
+static void collect_data_for_inference_task(){
+#ifdef CONFIG_COLLECT_TRAINING_DATA_FOR_NN    
+    if(NN_data_file==NULL)
+    {
+        ESP_LOGI(TAG, "Opening nn data file initially");
+        // Check if destination file exists before renaming
+        NN_data_file_name = malloc_or_die(MAX_NAME_LEN);
+
+        ESP_LOGI(TAG, "Opening nn data file initially 1");
+        sprintf(NN_data_file_name, MOUNT_POINT"/d.csv");
+
+        struct stat st;
+        int16_t i = 0;
+        ESP_LOGI(TAG, "Opening nn data file initially 2");
+        while (stat(NN_data_file_name, &st) == 0) {
+            // change the file name
+            sprintf(NN_data_file_name, MOUNT_POINT"/d_%d.csv", i++);
+            ESP_LOGI(TAG, "Opening nn data file initially i %d", i);
+        }
+        ESP_LOGI(TAG, "Opening nn data file initially 3");
+        NN_data_file = fopen(NN_data_file_name, "a");
+        ESP_LOGI(TAG, "Opening nn data file initially 4");
+        ESP_LOGI(TAG, "Opening file initially data name %s", NN_data_file_name);
+    }
+    static uint32_t write_count = 0;
+#endif
+    while(true){
+        if(timestamp_array[current_last_element]-previous_ss_data_timestamp >= COLLECT_SAMPLE_FOR_NN_EVERY_X_SECONDS * SECONDS_TO_MICROSECONDS){
             previous_ss_data_timestamp = timestamp_array[current_last_element];
             ESP_LOGI("collect_data_for_inference", "high watermark %d", uxTaskGetStackHighWaterMark(NULL));
             model_input_current_last_index = get_next_index(model_input_current_last_index, MODEL_STEPS);
@@ -298,26 +360,69 @@ static void collect_data_for_inference_task(){
             model_input[41] = heart_features.fractional_up_stroke_amplitude;
 
             ESP_LOGD(TAG, "adding input data current_last %d, data %f, %f, %f, %f, %f, %f, %f, %f, %f, %f, %f, %f, %f, %f, %f, %f, %f, %f, %f, %f, %f, %f, %f, %f, %f, %f, %f, %f, %f, %f, %f, %f, %f, %f, %f, %f, %f, %f, %f, %f, %f, %f", model_input_current_last_index, model_input[0], model_input[1], model_input[2], model_input[3], model_input[4], model_input[5], model_input[6], model_input[7], model_input[8], model_input[9], model_input[10], model_input[11], model_input[12], model_input[13], model_input[14], model_input[15], model_input[0], model_input[0], model_input[16], model_input[17], model_input[18], model_input[19], model_input[20], model_input[21], model_input[22], model_input[23], model_input[24], model_input[25], model_input[26], model_input[27], model_input[28], model_input[29], model_input[30], model_input[31], model_input[32], model_input[33], model_input[34], model_input[35], model_input[36], model_input[37], model_input[38], model_input[39], model_input[40], model_input[41]);
+#ifdef CONFIG_COLLECT_TRAINING_DATA_FOR_NN
+            fprintf(NN_data_file, "%u, %d, %f, %f, %f, %f, %f, %f, %f, %f, %f, %f, %f, %f, %f, %f, %f, %f, %f, %f, %f, %f, %f, %f, %f, %f, %f, %f, %f, %f, %f, %f, %f, %f, %f, %f, %f, %f, %f, %f, %f, %f, %f, %f\n", timestamp_array[current_last_element], button_was_pressed, model_input[0], model_input[1], model_input[2], model_input[3], model_input[4], model_input[5], model_input[6], model_input[7], model_input[8], model_input[9], model_input[10], model_input[11], model_input[12], model_input[13], model_input[14], model_input[15], model_input[0], model_input[0], model_input[16], model_input[17], model_input[18], model_input[19], model_input[20], model_input[21], model_input[22], model_input[23], model_input[24], model_input[25], model_input[26], model_input[27], model_input[28], model_input[29], model_input[30], model_input[31], model_input[32], model_input[33], model_input[34], model_input[35], model_input[36], model_input[37], model_input[38], model_input[39], model_input[40], model_input[41]);
+            button_was_pressed = false;
+            write_count++;
+            if (write_count > TIME_RANGE_TO_KEEP/COLLECT_SAMPLE_FOR_NN_EVERY_X_SECONDS)
+            {
+                write_count = 0;
+                ESP_LOGI(TAG, "================ Closing data file ================");
+                fflush(NN_data_file);
+                fclose(NN_data_file);
+                ESP_LOGI(TAG, "================ data file closed ================");
+                ESP_LOGI(TAG, "Opening file");
+                NN_data_file = fopen(NN_data_file_name, "a");
+            }
+#endif
         }
         vTaskDelay((10) / portTICK_PERIOD_MS);
     }
 }
-
-static void run_inference_task(){
-    vTaskDelay((1000) / portTICK_PERIOD_MS);
-    while(true){
-        if((!started_inference && timestamp_array[current_last_element]-previous_ss_timestamp >= CONFIG_START_INFERENCE_AFTER_X_SECONDS*SECONDS_TO_MICROSECONDS) || (started_inference && timestamp_array[current_last_element]-previous_ss_timestamp >= CONFIG_RUN_INFERENCE_EVERY_X_SECONDS*SECONDS_TO_MICROSECONDS)){
-            started_inference = true;
-            ESP_LOGI(TAG, "running inference, high watermark %d", uxTaskGetStackHighWaterMark(NULL));
-            previous_ss_timestamp = timestamp_array[current_last_element];
-            run_sleep_stage_classification();
-        }
-        // delay 250 ms
-        vTaskDelay((250) / portTICK_PERIOD_MS);
-    }
-}
 #endif
 
+
+#ifdef CONFIG_CALCULATE_SSNR
+void SSNR_calculation(float amp_array[][NUMBER_SUBCARRIERS]){
+    // get interference power
+    float interference_power[NUMBER_SUBCARRIERS] = {0};
+    float dynamic_power[NUMBER_SUBCARRIERS] = {0};
+
+    // static power is already known as the mean of the subcarrier amplitudes
+
+    int current_index = current_last_element;
+    for(int i=0; i<WINDOW_FOR_SSNR_IN_SECONDS*CSI_RATE; i++){
+        for(int s=0; s<NUMBER_SUBCARRIERS; s++){
+            float value = fabs(amp_array[current_index][s] - subcarrier_amplitude_means[s].current_mean);
+            if(interference_differences[s][i] > interference_power[s]){
+                interference_power[s] = interference_differences[s][i];
+            }
+            
+            if(value > dynamic_power[s]){
+                dynamic_power[s] = value;
+            }
+        }
+        current_index = get_previous_index(current_index, MAX_NUMBER_OF_SAMPLES_KEPT);
+    }
+
+    ESP_LOGI(TAG, "SSNR after for");
+
+    float SSNR[NUMBER_SUBCARRIERS]; 
+    for(int s=0; s<NUMBER_SUBCARRIERS; s++){
+        SSNR[s]= dynamic_power[s] / (interference_power[s] + subcarrier_amplitude_means[s].current_mean);
+        if((interference_power[s] + subcarrier_amplitude_means[s].current_mean) == 0){
+            SSNR[s] = -1;
+        }
+        max_ssnr = 0;
+        if(SSNR[s] > max_ssnr){
+            max_ssnr = SSNR[s];
+            max_subcarrier = s;
+        }
+        ESP_LOGI(TAG, "subcarrier %i SSNR %f", s, SSNR[s]);    
+    }
+    ESP_LOGW(TAG, "max SSNR %f at subcarrier %d", max_ssnr, max_subcarrier);
+}
+#endif
 
 // -- probably_removable
 size_t print_sti_to_buffer(char *buffer, size_t len){
@@ -381,6 +486,7 @@ static void udp_client_task(void *pvParameters)
     vTaskDelay(10000 / portTICK_PERIOD_MS);
 
     while (1) {
+        ESP_LOGI("UDP", "udp client task is running");
 
         struct sockaddr_in dest_addr;
         dest_addr.sin_addr.s_addr = inet_addr(HOST_IP_ADDR);
@@ -457,6 +563,7 @@ static void udp_calibration_task(void *pvParameters)
     int ip_protocol = 0;
 
     while (1) {
+        ESP_LOGI("UDP", "udp  calibration task is running");
 
         struct sockaddr_in dest_addr;
         dest_addr.sin_addr.s_addr = inet_addr(HOST_IP_ADDR);
@@ -924,6 +1031,8 @@ static void csi_processing_task(void *arg)
     static uint32_t write_count = 0;
 #endif
 
+    ESP_LOGI("CSI", "csi task is running");
+
     while (xQueueReceive(g_csi_info_queue, &info, portMAX_DELAY)) {
         wifi_pkt_rx_ctrl_t *rx_ctrl = &info->rx_ctrl;
 
@@ -945,18 +1054,30 @@ static void csi_processing_task(void *arg)
                 initialize_hampel_filter(&hampel_filters[i], CONFIG_HAMPEL_WINDOW_SIZE);
                 amplitude[i] = delayed_hampel_filter(&hampel_filters[i], amplitude[i]);
 #endif
-                dumb_running_mean_initialize(&subcarrier_amplitude_means[i], MAX_NUMBER_OF_SAMPLES_KEPT);
-                dumb_running_mean_append(&subcarrier_amplitude_means[i], amplitude[i], rx_ctrl->timestamp, TIME_RANGE_TO_KEEP * SECONDS_TO_MICROSECONDS);
+                dumb_running_mean_initialize(&subcarrier_amplitude_means[i], WINDOW_FOR_SSNR_IN_SECONDS*CSI_RATE);
+                dumb_running_mean_append(&subcarrier_amplitude_means[i], amplitude[i], rx_ctrl->timestamp, WINDOW_FOR_SSNR_IN_SECONDS * SECONDS_TO_MICROSECONDS);
             }else{
 #ifdef CONFIG_PERFORM_OUTLIER_FILTERING
-                amplitude[i] = delayed_hampel_filter(&hampel_filters[i], amplitude[i]);
+                float value = delayed_hampel_filter(&hampel_filters[i], amplitude[i]);
+#ifdef CONFIG_CALCULATE_SSNR
+                interference_differences[i][interference_differences_last_index] = fabs(amplitude[i] - value);
+                interference_differences_last_index = get_next_index(interference_differences_last_index, WINDOW_FOR_SSNR_IN_SECONDS*CSI_RATE);
 #endif
-                dumb_running_mean_append(&subcarrier_amplitude_means[i], amplitude[i], rx_ctrl->timestamp, TIME_RANGE_TO_KEEP * SECONDS_TO_MICROSECONDS);
+                amplitude[i] = value;
+#endif
+                dumb_running_mean_append(&subcarrier_amplitude_means[i], amplitude[i], rx_ctrl->timestamp, WINDOW_FOR_SSNR_IN_SECONDS * SECONDS_TO_MICROSECONDS);
             }
             sum = sum + amplitude[i];
             // phase[i] = atan2(info->buf[i*2 + 0],info->buf[i*2 + 1]);
         }
 
+#ifdef CONFIG_CALCULATE_SSNR
+        if(rx_ctrl->timestamp-previous_SSNR_timestamp >= calculate_SSNR_every_x_seconds*SECONDS_TO_MICROSECONDS){
+            ESP_LOGI(TAG, "running SSNR calculation, timestamp %u, previous_timestamp %u", rx_ctrl->timestamp, previous_SSNR_timestamp);
+            SSNR_calculation(amplitude_array);
+            previous_SSNR_timestamp = rx_ctrl->timestamp;
+        }
+#endif
         amplitude_mean = sum / NUMBER_SUBCARRIERS;
 
         // calculate amplitude deviation
@@ -1738,6 +1859,11 @@ static void csi_processing_task(void *arg)
 #ifdef CONFIG_SENSE_PRINT_SLEEP_STAGE_CLASSIFICATION_SD
             len += sprintf(buffer + len, ",sleep_stage_classification");
 #endif
+
+#ifdef CONFIG_SENSE_PRINT_SSNR_SD
+            len += sprintf(buffer + len, ",max_ssnr,max_ssnr_subcarrier");
+#endif
+
             len += sprintf(buffer + len, ",button_pressed,discarded_samples");
             len += sprintf(buffer + len, ",sequence,timestamp,source_mac,first_word_invalid,len,rssi,rate,sig_mode,mcs,bandwidth,smoothing,not_sounding,aggregation,stbc,fec_coding,sgi,noise_floor,ampdu_cnt,channel,secondary_channel,local_timestamp,ant,sig_len,rx_state");
 #ifdef CONFIG_SENSE_PRINT_CSI_SD   
@@ -1818,6 +1944,10 @@ static void csi_processing_task(void *arg)
 
 #ifdef CONFIG_SENSE_PRINT_SLEEP_STAGE_CLASSIFICATION_SD
             len += sprintf(buffer + len, ",%d", sleep_stage);
+#endif
+
+#ifdef CONFIG_SENSE_PRINT_SSNR_SD
+            len += sprintf(buffer + len, ",%f,%d", max_ssnr, max_subcarrier);
 #endif
 
         len += sprintf(buffer + len, ",%d,%d", button_pressed, discarded_samples);
@@ -1947,6 +2077,10 @@ static void csi_processing_task(void *arg)
             len += sprintf(buffer + len, ",sleep_stage_classification");
 #endif
 
+#ifdef CONFIG_SENSE_PRINT_SSNR_SD
+            len += sprintf(buffer + len, ",max_ssnr,max_ssnr_subcarrier");
+#endif
+
             len += sprintf(buffer + len, ",button_pressed,discarded_samples");
 
             len += sprintf(buffer + len, ",sequence,timestamp,source_mac,first_word_invalid,len,rssi,rate,sig_mode,mcs,bandwidth,smoothing,not_sounding,aggregation,stbc,fec_coding,sgi,noise_floor,ampdu_cnt,channel,secondary_channel,local_timestamp,ant,sig_len,rx_state");
@@ -2029,6 +2163,10 @@ static void csi_processing_task(void *arg)
 
 #ifdef CONFIG_SENSE_PRINT_SLEEP_STAGE_CLASSIFICATION_SD
             len += sprintf(buffer + len, ",%d", sleep_stage);
+#endif
+
+#ifdef CONFIG_SENSE_PRINT_SSNR_SD
+            len += sprintf(buffer + len, ",%f,%d", max_ssnr, max_subcarrier);
 #endif
 
         len += sprintf(buffer + len, ",%d,%d", button_pressed, discarded_samples);
@@ -2133,6 +2271,10 @@ static void csi_processing_task(void *arg)
             len1 += sprintf(buffer + len1, ",sleep_stage_classification");
 #endif
 
+#ifdef CONFIG_SENSE_PRINT_SSNR_S
+            len1 += sprintf(buffer + len1, ",max_ssnr,max_ssnr_subcarrier");
+#endif
+
             len1 += sprintf(buffer + len1, ",sequence,timestamp,source_mac,first_word_invalid,len,rssi,rate,sig_mode,mcs,bandwidth,smoothing,not_sounding,aggregation,stbc,fec_coding,sgi,noise_floor,ampdu_cnt,channel,secondary_channel,local_timestamp,ant,sig_len,rx_state");
 #ifdef CONFIG_SENSE_PRINT_CSI_S   
             len1 += sprintf(buffer + len1, ",data");
@@ -2212,7 +2354,11 @@ static void csi_processing_task(void *arg)
 #endif
 
 #ifdef CONFIG_SENSE_PRINT_SLEEP_STAGE_CLASSIFICATION_S
-            len1 += sprintf(buffer + len1, ",%d", sleep_stage);
+        len1 += sprintf(buffer + len1, ",%d", sleep_stage);
+#endif
+
+#ifdef CONFIG_SENSE_PRINT_SSNR_S
+        len1 += sprintf(buffer + len1, ",%f,%d", max_ssnr, max_subcarrier);
 #endif
 
         len1 += sprintf(buffer + len1, ",%d,%u," MACSTR ",%d,%d,%d,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%d,%u,%u,%u,%u,%u,%u,%u",
@@ -2298,6 +2444,10 @@ static void csi_processing_task(void *arg)
             len2 += sprintf(buffer + len2, ",sleep_stage_classification");
 #endif
 
+#ifdef CONFIG_SENSE_PRINT_SSNR_U
+            len2 += sprintf(buffer + len2, ",max_ssnr,max_ssnr_subcarrier");
+#endif
+
             len2 += sprintf(buffer + len2, ",sequence,timestamp,source_mac,first_word_invalid,len,rssi,rate,sig_mode,mcs,bandwidth,smoothing,not_sounding,aggregation,stbc,fec_coding,sgi,noise_floor,ampdu_cnt,channel,secondary_channel,local_timestamp,ant,sig_len,rx_state");
 #ifdef CONFIG_SENSE_PRINT_CSI_U   
             len2 += sprintf(buffer + len2, ",data");
@@ -2372,7 +2522,11 @@ static void csi_processing_task(void *arg)
 #endif
 
 #ifdef CONFIG_SENSE_PRINT_SLEEP_STAGE_CLASSIFICATION_U
-            len2 += sprintf(buffer + len2, ",%d", sleep_stage);
+        len2 += sprintf(buffer + len2, ",%d", sleep_stage);
+#endif
+
+#ifdef CONFIG_SENSE_PRINT_SSNR_U
+        len2 += sprintf(buffer + len2, ",%f,%d", max_ssnr, max_subcarrier);
 #endif
 
         len2 += sprintf(buffer + len2, ",%d,%u," MACSTR ",%d,%d,%d,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%d,%u,%u,%u,%u,%u,%u,%u",
@@ -2615,7 +2769,7 @@ void wifi_init_softap(void)
     ESP_ERROR_CHECK(esp_wifi_set_csi_config(&csi_config));
 }
 
-#if defined(CONFIG_SENSE_LOG_TO_SD) || defined(CONFIG_PROCESS_CSI_FROM_FILE)
+#if defined(CONFIG_SENSE_LOG_TO_SD) || defined(CONFIG_PROCESS_CSI_FROM_FILE) || defined(CONFIG_COLLECT_TRAINING_DATA_FOR_NN)
     void init_sdcard(void)
 {
     esp_err_t ret;
@@ -2682,6 +2836,7 @@ static void gpio_task_example(void* arg)
         if(xQueueReceive(gpio_evt_queue, &io_num, portMAX_DELAY)) {
             printf("GPIO[%"PRIu32"] intr, val: %d\n", io_num, gpio_get_level(io_num));
             button_pressed = true;
+            button_was_pressed = true;
 
             // reset timers so that they are synchronized with the reference device
             previous_fft_timestamp = timestamp_array[current_last_element] - FFT_EVERY_X_SECONDS*SECONDS_TO_MICROSECONDS - 1;
@@ -2690,7 +2845,7 @@ static void gpio_task_example(void* arg)
             previous_subcarrier_selection_timestamp = timestamp_array[current_last_element] - CONFIG_SUBCARRIER_SELECTION_EVERY_X_SECONDS*SECONDS_TO_MICROSECONDS - 1;
 #endif
 #ifdef CONFIG_RUN_INFERENCE
-            previous_ss_data_timestamp = timestamp_array[current_last_element] - 500000 - 1;
+            previous_ss_data_timestamp = timestamp_array[current_last_element] - COLLECT_SAMPLE_FOR_NN_EVERY_X_SECONDS*SECONDS_TO_MICROSECONDS - 1;
             previous_ss_timestamp = timestamp_array[current_last_element] - CONFIG_RUN_INFERENCE_EVERY_X_SECONDS*SECONDS_TO_MICROSECONDS - 1;
 #endif
         }
@@ -2782,7 +2937,7 @@ void app_main(void)
     }
 
 
-#if defined(CONFIG_SENSE_LOG_TO_SD) || defined(CONFIG_PROCESS_CSI_FROM_FILE)
+#if defined(CONFIG_SENSE_LOG_TO_SD) || defined(CONFIG_PROCESS_CSI_FROM_FILE) || defined(CONFIG_COLLECT_TRAINING_DATA_FOR_NN)
     init_sdcard();
 #endif
 
@@ -2818,8 +2973,19 @@ void app_main(void)
 
 
     g_csi_info_queue = xQueueCreate(256, sizeof(void *));
-    buffer_queue = xQueueCreate(2048, sizeof(void *));
-    xTaskCreate(csi_processing_task, "csi_data_print", 4 * 1024, NULL, 0, NULL);
+    if(g_csi_info_queue == 0){
+        ESP_LOGW(TAG, "failed to create csi queue");
+    }
+    buffer_queue = xQueueCreate(10, sizeof(void *));
+    if(buffer_queue == 0){
+        ESP_LOGW(TAG, "failed to create buffer queue");
+    }
+    int result = 0;
+    result = xTaskCreate(csi_processing_task, "csi_data_print", 6 * 1024, NULL, 0, NULL);
+    ESP_LOGW(TAG, " csi task result %d", result);
+    if(result == 0){
+        ESP_LOGW(TAG, "failed to create csi task");
+    }
 
 #ifdef CONFIG_PROCESS_CSI_FROM_FILE
     xTaskCreate(csi_from_file_task, "csi_from_file_task", 8 * 1024, NULL, 0, NULL);
@@ -2829,8 +2995,11 @@ void app_main(void)
     xTaskCreate(udp_client_task, "udp_client_task", 3 * 1024, NULL, 0, NULL);
     xTaskCreate(udp_calibration_task, "udp_calibration_task", 3 * 1024, NULL, 0, NULL);
 #endif
+
+#if defined(CONFIG_RUN_INFERENCE) || defined(CONFIG_COLLECT_TRAINING_DATA_FOR_NN)
+    xTaskCreate(collect_data_for_inference_task, "collect_data_for_inference_task", 4*1024, NULL, 0, NULL);
+#endif
 #ifdef CONFIG_RUN_INFERENCE
-    xTaskCreate(collect_data_for_inference_task, "collect_data_for_inference_task", 3*1024, NULL, 0, NULL);
     xTaskCreate(run_inference_task, "run_inference_task", 3*1024, NULL, 0, NULL);
 #endif
     ESP_LOGI(TAG, "completed main");

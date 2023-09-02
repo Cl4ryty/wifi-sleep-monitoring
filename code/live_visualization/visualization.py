@@ -13,6 +13,9 @@ parser = argparse.ArgumentParser(description="Parses incoming data / features in
 parser.add_argument("--use_udp_stream",
                     default=False)
 
+parser.add_argument("--data_from_file",
+                    default=False)
+
 parser.add_argument("--plot_sti",
                     default=True)
 parser.add_argument("--plot_fused_breath",
@@ -84,9 +87,12 @@ parser.add_argument("--plot_up_to_down_amplitude_ratio",
                     default=False)
 parser.add_argument("--plot_fractional_up_stroke_amplitude",
                     default=False)
-
-parser.add_argument("--plot_amplitudes",
+parser.add_argument("--plot_sleep_stage",
                     default=True)
+parser.add_argument("--plot_ssnr",
+                    default=True)
+parser.add_argument("--plot_amplitudes",
+                    default=False)
 
 args = parser.parse_args()
 
@@ -121,7 +127,8 @@ option_names = {
     "detection": "SENSE_PRINT_DETECTION",
     "thresholds": "SENSE_PRINT_THRESHOLDS",
     "amplitudes": "SENSE_PRINT_AMPLITUDES",
-    "sleep_stage": "SENSE_PRINT_SLEEP_STAGE_CLASSIFICATION"
+    "sleep_stage": "SENSE_PRINT_SLEEP_STAGE_CLASSIFICATION",
+    "ssnr": "SENSE_PRINT_SSNR"
 }
 
 option_suffix = "_SD"
@@ -183,7 +190,8 @@ option_indices = {
     "detected_small_movement": 13,
     "detected_large_movement": 14,
     "amplitudes": 21,
-    "sleep_stage": 22
+    "sleep_stage": 22,
+    "ssnr": 23,
 }
 
 # set up the window for pyqtgraph plots
@@ -210,6 +218,12 @@ if kconfig.syms[option_names["amplitudes"] + option_suffix].user_value == 2 and 
     for i in range(number_of_subcarriers):
         curve = carrier_plot.plot()
         carrier_curves.append(curve)
+    row += 1
+
+if kconfig.syms[option_names["ssnr"] + option_suffix].user_value == 2 and args.plot_ssnr:
+    ssnr_queue = collections.deque(maxlen=MAXLEN)
+    ssnr_plot = win.addPlot(title="SSNR", row=row, col=0)
+    ssnr_curve = ssnr_plot.plot()
     row += 1
 
 if kconfig.syms[option_names["sti"] + option_suffix].user_value == 2 and args.plot_sti:
@@ -240,6 +254,12 @@ if kconfig.syms[option_names["filtered_breath"] + option_suffix].user_value == 2
     filtered_breath_queue = collections.deque(maxlen=MAXLEN)
     filtered_breath_plot = win.addPlot(title="filtered_breath", row=row, col=0)
     filtered_breath_curve = filtered_breath_plot.plot()
+    row += 1
+
+if kconfig.syms[option_names["sleep_stage"] + option_suffix].user_value == 2 and args.plot_sleep_stage:
+    sleep_stage_queue = collections.deque(maxlen=MAXLEN)
+    sleep_stage_plot = win.addPlot(title="sleep_stage", row=row, col=0)
+    sleep_stage_curve = sleep_stage_plot.plot()
     row += 1
 
 if kconfig.syms[option_names["heart_features"]+option_suffix].user_value == 2 and args.plot_heart_features:
@@ -525,6 +545,10 @@ def update_plot():
         try:
             sys.stdin.buffer.flush()
             line = sys.stdin.buffer.readline().decode('utf-8').replace("\n", "")
+            if args.read_from_file:
+                # TODO
+                pass
+                
         except:
             pass  # might not be an utf-8 string!
     if read_from_udp:
@@ -547,6 +571,7 @@ def update_plot():
         if kconfig.syms[option_names["sti"] + option_suffix].user_value == 2 and args.plot_sti:
             print("values", values)
             print("sti value", values[option_indices["sti"]])
+            print("option suffix", option_suffix)
             sti = float(values[option_indices["sti"]])
             sti_queue.append(sti)
             sti_curve.setData(time_array, np.array(sti_queue))
@@ -921,6 +946,23 @@ def update_plot():
 
         if kconfig.syms[option_names["amplitudes"] + option_suffix].user_value != 2:
             reduce_index_by += 1
+
+        if kconfig.syms[option_names["sleep_stage"] + option_suffix].user_value == 2 and args.plot_sleep_stage:
+            sleep_stage = float(values[option_indices["sleep_stage"] - reduce_index_by])
+            sleep_stage_queue.append(sleep_stage)
+            sleep_stage_curve.setData(time_array, np.array(sleep_stage_queue))
+
+        if kconfig.syms[option_names["sleep_stage"] + option_suffix].user_value != 2:
+            reduce_index_by += 1
+
+        if kconfig.syms[option_names["ssnr"] + option_suffix].user_value == 2 and args.plot_ssnr:
+            ssnr = float(values[option_indices["ssnr"] - reduce_index_by])
+            ssnr_queue.append(ssnr)
+            ssnr_curve.setData(time_array, np.array(ssnr_queue))
+
+        if kconfig.syms[option_names["ssnr"] + option_suffix].user_value != 2:
+            reduce_index_by += 2
+            
 
         current_time += 1
 
