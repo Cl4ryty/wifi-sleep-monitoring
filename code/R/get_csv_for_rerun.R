@@ -1,0 +1,5 @@
+library(tidyverse)
+getwd()
+data <- read_csv("../../data/sleep_lab/data/esp/right/CSI.CSV")
+data <- data %>% select(type, button_pressed, sequence,timestamp,source_mac,first_word_invalid,len,rssi,rate,sig_mode,mcs,bandwidth,smoothing,not_sounding,aggregation,stbc,fec_coding,sgi,noise_floor,ampdu_cnt,channel,secondary_channel,local_timestamp,ant,sig_len,rx_state,data)
+write.csv(data, "CSI_P.CSV", row.names = F,  quote = c(27))
