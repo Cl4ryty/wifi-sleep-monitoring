@@ -78,19 +78,16 @@ extern "C" void model_setup(){
 }
 
 extern "C" int run_inference(float* input_values){
-    // printf("starting inference\n");
     // set the input values
     for (int i = 0; i < MODEL_STEPS*42; i++) {
         input->data.f[i] = input_values[i];
     }
-    // printf("set inputs, invoking now\n");
 
     // run the model
     TfLiteStatus invoke_status = interpreter->Invoke();
     if (invoke_status != kTfLiteOk) {
         //printf("Invoke failed\n");
     }
-    // printf("Invoke done, getting outputs\n");
 
     TfLiteTensor* output = interpreter->output(0);
     
@@ -103,7 +100,5 @@ extern "C" int run_inference(float* input_values){
             max_index = i;
         }
     }
-    // printf("input[0] %f, output[0] %f, output[1] %f, output[2] %f, output[3] %f, output[4] %f, output[5] %f\n", input_values[0], output->data.f[1], output->data.f[2], output->data.f[3], output->data.f[4], output->data.f[5]);
-
     return max_index;
 }

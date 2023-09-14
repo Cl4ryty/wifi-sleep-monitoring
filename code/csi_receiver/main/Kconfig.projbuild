@@ -14,7 +14,7 @@ menu "CSI Receiver Configuration"
             The number of CSI frames received per second - this should correspond to the number of Wi-Fi frames the CSI sender sends each second.
 
     config TIME_RANGE_TO_KEEP
-        int "Time range of samples too keep"
+        int "Time range of samples to keep"
         default 30
         range 0 120
         help
@@ -72,13 +72,6 @@ menu "CSI Receiver Configuration"
             default true
             help
                 Whether to perform MRC-PCA every X seconds as if on a timer.
-
-    config MRC_PCA_USE_SCALAR
-        depends on !SUBCARRIER_SELECTION_INSTEAD_OF_FUSION
-        bool "MRC-PCA use scalar"
-        default true
-        help
-            Whether to scale the MRC-PCA components.
 
     config MRC_PCA_EVERY_X_SECONDS
         depends on MRC_PCA_ON_TIMER && !SUBCARRIER_SELECTION_INSTEAD_OF_FUSION

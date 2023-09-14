@@ -12,8 +12,7 @@
 
 #include "lwip/sockets.h"
 
-#include "../components/utilities/include/utilities.h"
-// #include "utilities.h"
+#include "utilities.h"
 #include "using_eigen.h"
 #include "fft.h"
 #include "run_tf_inference.h"
@@ -106,8 +105,6 @@ typedef struct
 // defines for UDP broadcast
 #define HOST_IP_ADDR "192.168.4.255" // broadcast address for the standard AP-network
 #define PORT 8081
-#define BROADCAST_RATE 0.5 // rate in Hz -> every 2 seconds  -- probably_removable as logging to udp broadcast exists
-
 
 #define BREATH_LOWER_FREQUENCY_BOUND    0.1
 #define BREATH_UPPER_FREQUENCY_BOUND    0.5
@@ -236,26 +233,21 @@ unsigned previous_ss_data_timestamp = 0;
 
 #ifdef CONFIG_RUN_INFERENCE
 void run_sleep_stage_classification(){
-    ESP_LOGI(TAG, "run_sleep_stage_classification start");
     heap_caps_print_heap_info(MALLOC_CAP_DEFAULT);
 
     // copy the collected features in the correct order into the buffer
     if(model_input_current_last_index == MODEL_STEPS-1){
-        ESP_LOGI(TAG, "run_sleep_stage_classification if");
         memcpy(&model_input_array[0], &data_for_model_input[0], sizeof(float)*42*MODEL_STEPS);
     }else{
-        ESP_LOGI(TAG, "run_sleep_stage_classification else");
         memcpy(&model_input_array[0], &data_for_model_input[model_input_current_last_index+1], sizeof(float)*42*(MODEL_STEPS-1-model_input_current_last_index));
-        ESP_LOGI(TAG, "run_sleep_stage_classification else 1");
         memcpy(&model_input_array[MODEL_STEPS-1-model_input_current_last_index], &data_for_model_input[0], sizeof(float)*42*(model_input_current_last_index+1));
     }
 
-    ESP_LOGD(TAG, "run_sleep_stage_classification running inference");
+    ESP_LOGI(TAG, "run_sleep_stage_classification running inference");
     
     // run inference
     sleep_stage = run_inference(&model_input_array);
 
-    
     ESP_LOGI(TAG, "sleep stage classification returned %d", sleep_stage);
 }
 
@@ -281,21 +273,15 @@ static void collect_data_for_inference_task(){
         ESP_LOGI(TAG, "Opening nn data file initially");
         // Check if destination file exists before renaming
         NN_data_file_name = malloc_or_die(MAX_NAME_LEN);
-
-        ESP_LOGI(TAG, "Opening nn data file initially 1");
         sprintf(NN_data_file_name, MOUNT_POINT"/d.csv");
 
         struct stat st;
         int16_t i = 0;
-        ESP_LOGI(TAG, "Opening nn data file initially 2");
         while (stat(NN_data_file_name, &st) == 0) {
             // change the file name
             sprintf(NN_data_file_name, MOUNT_POINT"/d_%d.csv", i++);
-            ESP_LOGI(TAG, "Opening nn data file initially i %d", i);
         }
-        ESP_LOGI(TAG, "Opening nn data file initially 3");
         NN_data_file = fopen(NN_data_file_name, "a");
-        ESP_LOGI(TAG, "Opening nn data file initially 4");
         ESP_LOGI(TAG, "Opening file initially data name %s", NN_data_file_name);
     }
     static uint32_t write_count = 0;
@@ -303,7 +289,6 @@ static void collect_data_for_inference_task(){
     while(true){
         if(timestamp_array[current_last_element]-previous_ss_data_timestamp >= COLLECT_SAMPLE_FOR_NN_EVERY_X_SECONDS * SECONDS_TO_MICROSECONDS){
             previous_ss_data_timestamp = timestamp_array[current_last_element];
-            ESP_LOGI("collect_data_for_inference", "high watermark %d", uxTaskGetStackHighWaterMark(NULL));
             model_input_current_last_index = get_next_index(model_input_current_last_index, MODEL_STEPS);
             // create the buffer with the features in the correct order as input to the model
             float* model_input = data_for_model_input[model_input_current_last_index];
@@ -405,8 +390,6 @@ void SSNR_calculation(float amp_array[][NUMBER_SUBCARRIERS]){
         current_index = get_previous_index(current_index, MAX_NUMBER_OF_SAMPLES_KEPT);
     }
 
-    ESP_LOGI(TAG, "SSNR after for");
-
     float SSNR[NUMBER_SUBCARRIERS]; 
     for(int s=0; s<NUMBER_SUBCARRIERS; s++){
         SSNR[s]= dynamic_power[s] / (interference_power[s] + subcarrier_amplitude_means[s].current_mean);
@@ -418,140 +401,11 @@ void SSNR_calculation(float amp_array[][NUMBER_SUBCARRIERS]){
             max_ssnr = SSNR[s];
             max_subcarrier = s;
         }
-        ESP_LOGI(TAG, "subcarrier %i SSNR %f", s, SSNR[s]);    
+        ESP_LOGD(TAG, "subcarrier %i SSNR %f", s, SSNR[s]);    
     }
-    ESP_LOGW(TAG, "max SSNR %f at subcarrier %d", max_ssnr, max_subcarrier);
+    ESP_LOGI(TAG, "max SSNR %f at subcarrier %d", max_ssnr, max_subcarrier);
 }
 #endif
-
-// -- probably_removable
-size_t print_sti_to_buffer(char *buffer, size_t len){
-    // sti values        
-    // if(current_last_element >= current_first_element)
-    // {
-    //     len += sprintf(buffer + len, "[%f", sti_array[current_first_element]);
-    //     for (int i = current_first_element+1; i <= current_last_element; i++) 
-    //     {
-    //         len += sprintf(buffer + len, ",%f", sti_array[i]);
-    //     }
-    //     len += sprintf(buffer + len, "]\n");
-    // }
-    // else
-    // {
-    //     len += sprintf(buffer + len, "[%f", sti_array[current_first_element]);
-    //     for (int i = current_first_element+1; i < MAX_NUMBER_OF_SAMPLES_KEPT; i++) {
-    //         len += sprintf(buffer + len, ",%f", sti_array[i]);
-    //     }
-    //     for (int i = 0+1; i <= current_last_element; i++) {
-    //         len += sprintf(buffer + len, ",%f", sti_array[i]);
-    //     }
-    //     len += sprintf(buffer + len, "]\n");
-    // }
-
-    return len;
-}
-
-// -- probably_removable
-size_t print_heart_rate_to_buffer(char *buffer, size_t len){ //TODO: currently only dummy data
-    len += sprintf(buffer + len, "65");
-    return len;
-}
-
-// -- probably_removable
-size_t print_breathing_rate_to_buffer(char *buffer, size_t len){ //TODO: currently only dummy data
-    len += sprintf(buffer + len, "18");
-    return len;
-}
-
-// -- probably_removable
-void setup_broadcast_messages(){
-    // define what goes into the udp broadcast messages
-    create_function_list(&broadcast_functions, 5);
-    
-    // heart rate
-    append_to_function_list(&broadcast_functions, print_heart_rate_to_buffer);
-
-    append_to_function_list(&broadcast_functions, print_breathing_rate_to_buffer);
-
-    // sti
-    append_to_function_list(&broadcast_functions, print_sti_to_buffer);
-
-}
-
-// -- probably_removable
-static void udp_client_task(void *pvParameters)
-{
-    int addr_family = 0;
-    int ip_protocol = 0;
-    vTaskDelay(10000 / portTICK_PERIOD_MS);
-
-    while (1) {
-        ESP_LOGI("UDP", "udp client task is running");
-
-        struct sockaddr_in dest_addr;
-        dest_addr.sin_addr.s_addr = inet_addr(HOST_IP_ADDR);
-        dest_addr.sin_family = AF_INET;
-        dest_addr.sin_port = htons(PORT);
-        addr_family = AF_INET;
-        ip_protocol = IPPROTO_IP;
-
-
-        int sock = socket(addr_family, SOCK_DGRAM, ip_protocol);
-        if (sock < 0) {
-            ESP_LOGE(TAG, "Unable to create socket: errno %d", errno);
-            break;
-        }
-
-        // Set timeout
-        struct timeval timeout;
-        timeout.tv_sec = 10;
-        timeout.tv_usec = 0;
-        setsockopt (sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof timeout);
-
-        ESP_LOGI(TAG, "Socket created, sending to %s:%d", HOST_IP_ADDR, PORT);
-
-
-        while (1) 
-        {
-            // char *buffer = malloc_or_die(8 * 1024);
-            // size_t len = 0;
-            // // add a message to the start
-            // len += sprintf(buffer + len, "Message from ESP32;");
-
-
-            // // use the broadcast functions to generate the payload
-            // for(int i=0; i<broadcast_functions.elements-1; i++)
-            // {
-            //     len = (*broadcast_functions.list[i])(buffer, len);
-            //     len += sprintf(buffer + len, ";"); // separate with semicolon
-            // }
-            // len = (*broadcast_functions.list[broadcast_functions.elements-1])(buffer, len);
-            // create payload
-            BufferObject *buffer_object = NULL;
-            while (xQueueReceive(buffer_queue, &buffer_object, portMAX_DELAY)) {
-            
-                int err = sendto(sock, buffer_object->buffer, buffer_object->length, 0, (struct sockaddr *)&dest_addr, sizeof(dest_addr));
-                if (err < 0) {
-                    ESP_LOGE(TAG, "Error occurred during sending: errno %d", errno);
-                    break;
-                }
-                // ESP_LOGI(TAG, "Message sent");
-                free(buffer_object->buffer);
-                free(buffer_object);
-            }
-       
-            // vTaskDelay((1000/BROADCAST_RATE) / portTICK_PERIOD_MS);
-        }
-
-        if (sock != -1) 
-        {
-            ESP_LOGE(TAG, "Shutting down socket and restarting...");
-            shutdown(sock, 0);
-            close(sock);
-        }
-    }
-    vTaskDelete(NULL);
-}
 
 static void udp_calibration_task(void *pvParameters)
 {
@@ -563,8 +417,6 @@ static void udp_calibration_task(void *pvParameters)
     int ip_protocol = 0;
 
     while (1) {
-        ESP_LOGI("UDP", "udp  calibration task is running");
-
         struct sockaddr_in dest_addr;
         dest_addr.sin_addr.s_addr = inet_addr(HOST_IP_ADDR);
         dest_addr.sin_family = AF_INET;
@@ -590,12 +442,8 @@ static void udp_calibration_task(void *pvParameters)
         }
 
         while (1) {
-
-            ESP_LOGI("udp_cal_task", "high watermark %d", uxTaskGetStackHighWaterMark(NULL));
-
             struct sockaddr_storage source_addr; // Large enough for both IPv4 or IPv6
             socklen_t socklen = sizeof(source_addr);
-            //int len = recvfrom(sock, rx_buffer, sizeof(rx_buffer) - 1, 0, (struct sockaddr *)&dest_addr, &socklen);
 
             int len = recvfrom(sock, rx_buffer, sizeof(rx_buffer) - 1, 0, (struct sockaddr *)&source_addr, &socklen);
 
@@ -749,7 +597,6 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
     }
 }
 
-// -- probably_removable
 void analysis_init(void){
     bandpass_filter_initialize(&breathing_filter, breathing_bandpass_coefficients[0], breathing_bandpass_coefficients[1], NUMBER_COEFFICIENTS);
     bandpass_filter_initialize(&heart_filter, heart_bandpass_coefficients[0], heart_bandpass_coefficients[1], NUMBER_COEFFICIENTS);
@@ -836,7 +683,7 @@ float mrc_pca(float *MRC_ratios, float data[][NUMBER_SUBCARRIERS], int data_leng
         // add the sign of the first principal component to each MRC ratio
         MRC_ratios[subcarrier] *= pc_positive;
         
-        ESP_LOGI(TAG, "end of subcarrier for, value %f, signal %f, noise %f, pc_positive %f", MRC_ratios[subcarrier], signal_energy, noise_energy, pc_positive);
+        ESP_LOGD(TAG, "end of subcarrier for, value %f, signal %f, noise %f, pc_positive %f", MRC_ratios[subcarrier], signal_energy, noise_energy, pc_positive);
     }
     ESP_LOGI(TAG, "completed mrc-pca, MRC scalar %f", MRC_scalar);
     fft_destroy(real_fft_plan);
@@ -905,15 +752,12 @@ float fft_rate_estimation(float *data, int data_length, int data_current_last_in
 
 
 void variance_based_subcarrier_selection(float data[][NUMBER_SUBCARRIERS], int data_length, int data_current_last_index, int data_current_first_index, DumbRunningMean subcarrier_means[NUMBER_SUBCARRIERS]){
-    ESP_LOGI(TAG, "subcarrier selection");
     // get the amplitudes for each subcarrier and calculate the variance
 
     // initialize variances as 0
     float variances[NUMBER_SUBCARRIERS] = {0};
 
     int number_of_elements = 0;
-
-    ESP_LOGI(TAG, "subcarrier selection 1, variances %d", variances);
 
     // iterate over the samples to get variance
     for(int i=data_current_first_index; i!=data_current_last_index; i=get_next_index(i, data_length)){
@@ -923,8 +767,6 @@ void variance_based_subcarrier_selection(float data[][NUMBER_SUBCARRIERS], int d
             variances[s] += powf(data[i][s] - subcarrier_means[s].current_mean, 2);
         }
     }
-
-    ESP_LOGI(TAG, "subcarrier selection 2");
 
     // get the subcarrier with the maximum variance
     float maximum = -1.0;
@@ -940,7 +782,6 @@ void variance_based_subcarrier_selection(float data[][NUMBER_SUBCARRIERS], int d
     if(maximum_index == selected_subcarrier){
         ESP_LOGI(TAG, "same subcarrier selected as before");
     }else{
-        // TODO
         ESP_LOGI(TAG, "new subcarrier selected");
         
         // fill filtered amplitude arrays
@@ -1035,18 +876,12 @@ static void csi_processing_task(void *arg)
 
     while (xQueueReceive(g_csi_info_queue, &info, portMAX_DELAY)) {
         wifi_pkt_rx_ctrl_t *rx_ctrl = &info->rx_ctrl;
-
         float amplitude[NUMBER_SUBCARRIERS];
-        // float phase[NUMBER_SUBCARRIERS];
-        
-        // calculate amplitude and phase
+    
+        // calculate amplitude
         float sum = 0;
         for (int i=0 ; i < 64; i++)
         {
-            // // skip null and pilot (unusable) subcarriers
-            // if(i==0 || i==7 || i==21 || i==29 || i==30 || i==31 || i==32 || i==33 || i==34 || i==35 || i==43 || i==57 ){
-            //     continue;
-            // }
             amplitude[i] = sqrt(pow(info->buf[i*2 + 0], 2) + pow(info->buf[i*2 + 1], 2));
 
             if(first_run){
@@ -1068,7 +903,6 @@ static void csi_processing_task(void *arg)
                 dumb_running_mean_append(&subcarrier_amplitude_means[i], amplitude[i], rx_ctrl->timestamp, WINDOW_FOR_SSNR_IN_SECONDS * SECONDS_TO_MICROSECONDS);
             }
             sum = sum + amplitude[i];
-            // phase[i] = atan2(info->buf[i*2 + 0],info->buf[i*2 + 1]);
         }
 
 #ifdef CONFIG_CALCULATE_SSNR
@@ -1169,10 +1003,6 @@ static void csi_processing_task(void *arg)
 
 #ifndef CONFIG_SUBCARRIER_SELECTION_INSTEAD_OF_FUSION   
         // calculate fused amplitude
-#ifndef CONFIG_MRC_PCA_USE_SCALAR
-        MRC_scalar_breath = 1.0;
-        MRC_scalar_heart = 1.0;
-#endif
 
         for(int i=0; i<NUMBER_SUBCARRIERS; i++){
             if(!ran_mrc_in_the_beginning){ 
@@ -1184,7 +1014,6 @@ static void csi_processing_task(void *arg)
                 fused_amplitude_heart += (amplitude[i] * (MRC_ratios_heart[i]/MRC_scalar_heart));
             }
         }
-        //ESP_LOGI(TAG, " amp %f, ratio %f, scalar %f, ratio/scalar %f, fused %f", amplitude[42], MRC_ratios_breath[42], MRC_scalar_breath, (MRC_ratios_breath[42]/MRC_scalar_breath), fused_amplitude_breath);
         if(first_run){
             dumb_running_mean_initialize(&fused_heart_mean, MAX_NUMBER_OF_SAMPLES_KEPT);
             dumb_running_mean_append(&fused_heart_mean, fused_amplitude_heart, timestamp_array[current_last_element], TIME_RANGE_TO_KEEP * SECONDS_TO_MICROSECONDS);
@@ -1201,14 +1030,11 @@ static void csi_processing_task(void *arg)
         fused_amplitude_heart = fused_amplitude_heart - fused_heart_mean.current_mean;
 #endif
 #endif
-        //ESP_LOGI(TAG, "fused - static %f", fused_amplitude_breath);
-
         // bandpass filter the amplitude
         bandpass_filter_apply(&breathing_filter, fused_amplitude_breath);
         bandpass_filter_apply(&heart_filter, fused_amplitude_heart);
         // save the filtered amplitude
         filtered_breath[current_last_element] = breathing_filter.out;
-        //ESP_LOGI(TAG, "filtered %f", breathing_filter.out);
         filtered_heart[current_last_element] = heart_filter.out;
 
 
@@ -1266,7 +1092,7 @@ static void csi_processing_task(void *arg)
             ESP_LOGI(TAG, "fft rate estimated, breathing rate %f, heart rate %f, current timestamp %d", T_breath, T_heart, timestamp_array[current_last_element]);
         }
 
-        // MAC for breathingon
+        // MAC for breathing
         int T_timestamp = 60/T_breath * SECONDS_TO_MICROSECONDS;
 
         bool breath_found_poi = false;
@@ -1356,7 +1182,7 @@ static void csi_processing_task(void *arg)
                             // check whether the amplitude is large enough
                             if(use_peak_amplitude_criterium && (MAC_breath.mean_peak_to_valley_amplitude.current_number_of_elements > 20 && breath_cycle_amplitude <= MAC_breath.mean_peak_to_valley_amplitude.current_mean * 0.2)){
                                 // is too small, discard the newly found intercept and valley
-                                ESP_LOGE(TAG, "ampliude not large enough");
+                                ESP_LOGI(TAG, "ampliude not large enough");
                             }
                             else 
                             {
@@ -1466,7 +1292,7 @@ static void csi_processing_task(void *arg)
                             // check whether the amplitude is large enough - but only if enough amplitudes have been added yet, otherwise if the first amplitude is an outlier no further ones will be added
                             if(use_peak_amplitude_criterium && (MAC_breath.mean_peak_to_valley_amplitude.current_number_of_elements > 20 && breath_cycle_amplitude <= MAC_breath.mean_peak_to_valley_amplitude.current_mean * 0.2)){
                                 // is too small, discard the newly found intercept and peak
-                                ESP_LOGE(TAG, "amplitude not large enough");
+                                ESP_LOGI(TAG, "amplitude not large enough");
                             }
                             else 
                             {   
@@ -1524,10 +1350,7 @@ static void csi_processing_task(void *arg)
                     }
                     MAC_breath.first_intercept = false;
                 }
-            }
-            
-            // printf("breathing data,%d,%f,%f,%d,%d,%d,%d,%d,%d\n", timestamp_array[current_last_element], filtered_breath[current_last_element], MAC_breath.MAC.current_mean, breath_found_up_intercept, breath_found_down_intercept, found_valley, valley_index_difference_from_last_intercept, found_peak, peak_index_difference_from_last_intercept);
-            
+            }            
         }
         
 
@@ -1620,7 +1443,7 @@ static void csi_processing_task(void *arg)
                             // check whether the amplitude is large enough
                             if(use_peak_amplitude_criterium && (MAC_heart.mean_peak_to_valley_amplitude.current_number_of_elements > 20 && heart_cycle_amplitude <= MAC_heart.mean_peak_to_valley_amplitude.current_mean * 0.2)){
                                 // is too small, discard the newly found intercept and valley
-                                ESP_LOGE(TAG, "ampliude not large enough");
+                                ESP_LOGI(TAG, "ampliude not large enough");
                             }
                             else 
                             {
@@ -1731,7 +1554,7 @@ static void csi_processing_task(void *arg)
                             // check whether the amplitude is large enough - but only if enough amplitudes have been added yet, otherwise if the first amplitude is an outlier no further ones will be added
                             if(use_peak_amplitude_criterium && (MAC_heart.mean_peak_to_valley_amplitude.current_number_of_elements > 20 && heart_cycle_amplitude <= MAC_heart.mean_peak_to_valley_amplitude.current_mean * 0.2)){
                                 // is too small, discard the newly found intercept and peak
-                                ESP_LOGE(TAG, "amplitude not large enough");
+                                ESP_LOGI(TAG, "amplitude not large enough");
                             }
                             else 
                             {   
@@ -1798,6 +1621,10 @@ static void csi_processing_task(void *arg)
             append_to_list_char(&id_list, activity_id);
             append_to_list_float(&sti_list, sti);
         }
+
+        // get the current value of button_pressed and reset button_pressed for the next iteration
+        bool button = button_pressed;
+        button_pressed = false;
 
 #if !defined(CONFIG_SENSE_LOG_DIFFERENT_THINGS_TO_DIFFERENT_OUTPUTS) && (defined(CONFIG_SENSE_LOG_TO_SERIAL) || defined(CONFIG_SENSE_LOG_TO_SD) || defined(CONFIG_SENSE_LOG_TO_UDP))
         size_t len = 0;
@@ -1950,7 +1777,7 @@ static void csi_processing_task(void *arg)
             len += sprintf(buffer + len, ",%f,%d", max_ssnr, max_subcarrier);
 #endif
 
-        len += sprintf(buffer + len, ",%d,%d", button_pressed, discarded_samples);
+        len += sprintf(buffer + len, ",%d,%d", button, discarded_samples);
         len += sprintf(buffer + len, ",%d,%u," MACSTR ",%d,%d,%d,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%d,%u,%u,%u,%u,%u,%u,%u",
                     count, esp_log_timestamp(),
                     MAC2STR(info->mac), info->first_word_invalid, info->len, rx_ctrl->rssi, rx_ctrl->rate, rx_ctrl->sig_mode,
@@ -2169,7 +1996,7 @@ static void csi_processing_task(void *arg)
             len += sprintf(buffer + len, ",%f,%d", max_ssnr, max_subcarrier);
 #endif
 
-        len += sprintf(buffer + len, ",%d,%d", button_pressed, discarded_samples);
+        len += sprintf(buffer + len, ",%d,%d", button, discarded_samples);
         len += sprintf(buffer + len, ",%d,%u," MACSTR ",%d,%d,%d,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%d,%u,%u,%u,%u,%u,%u,%u",
                     count, esp_log_timestamp(),
                     MAC2STR(info->mac), info->first_word_invalid, info->len, rx_ctrl->rssi, rx_ctrl->rate, rx_ctrl->sig_mode,
@@ -2558,9 +2385,9 @@ static void csi_processing_task(void *arg)
             free(q_data);
         }
 #endif
-        button_pressed = false;
         discarded_samples = false;
         count++;
+        free(info->buf);
         free(info);
     }
 
@@ -2585,8 +2412,6 @@ static void csi_callback(void *ctx, wifi_csi_info_t *info)
 {
     int result = memcmp(info->mac, csi_sender_mac, sizeof(info->mac));
 
-    //ESP_LOGI(TAG, "CSI_DATA,  received mac " MACSTR ", compared to " MACSTR ", result %d", MAC2STR(csi_sender_mac), MAC2STR(info->mac), result);
-    // ESP_LOGI(TAG, "CSI_DATA2, " MACSTR ", result %d", 1, MAC2STR(temp), result);
     if(result==0){
         wifi_csi_info_t *q_data = malloc_or_die(sizeof(wifi_csi_info_t) + info->len);
         *q_data = *info;
@@ -2604,7 +2429,6 @@ static void csi_callback(void *ctx, wifi_csi_info_t *info)
 #ifdef CONFIG_PROCESS_CSI_FROM_FILE
 static void csi_from_file_task()
 {
-
     // the file has to be in the correct format
     FILE *file;
     const char *file_name = MOUNT_POINT"/csi_p.csv";
@@ -2617,12 +2441,13 @@ static void csi_from_file_task()
     // read line by line
     char line[1024];
 
-    char *buffer_string = malloc_or_die(8 * 1024);
+    char *buffer_string = malloc_or_die(1024);
 
     // get the first line and skip it
     fgets(line, 1024, file);
 
     while(fgets(line, 1024, file)){
+        // printf("line read: %s\n", line);
         wifi_csi_info_t info;
         wifi_pkt_rx_ctrl_t *ctrl = malloc_or_die(sizeof(wifi_pkt_rx_ctrl_t));
         info.rx_ctrl = *ctrl;
@@ -2634,14 +2459,19 @@ static void csi_from_file_task()
         int aggregation_temp, stbc_temp, fec_coding_temp, sgi_temp, noise_floor_temp, ampdu_cnt_temp;
         int channel_temp, secondary_channel_temp, timestamp_temp, ant_temp, sig_len_temp, rx_state_temp;
 
-        int count = sscanf(line, "%*20[^,],%*d,%*d,%*u,%2" SCNx8 ":%2" SCNx8 ":%2" SCNx8 ":%2" SCNx8 ":%2" SCNx8 ":%2" SCNx8 ",%d,%d,%d,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%d,%u,%u,%u,%u,%u,%u,%u,%s",
-                       &info.mac[0], &info.mac[1], &info.mac[2], &info.mac[3], &info.mac[4], &info.mac[5],
+        int button;
+
+        int count = sscanf(line, "%*20[^,],%d,%*d,%*u,%2" SCNx8 ":%2" SCNx8 ":%2" SCNx8 ":%2" SCNx8 ":%2" SCNx8 ":%2" SCNx8 ",%d,%d,%d,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%d,%u,%u,%u,%u,%u,%u,%u,%s",
+                       &button, &info.mac[0], &info.mac[1], &info.mac[2], &info.mac[3], &info.mac[4], &info.mac[5],
                        &info.first_word_invalid, &info.len,
                        &rssi_temp, &rate_temp, &sig_mode_temp, &mcs_temp, &cwb_temp, &smoothing_temp,
                        &not_sounding_temp, &aggregation_temp, &stbc_temp, &fec_coding_temp, &sgi_temp,
                        &noise_floor_temp, &ampdu_cnt_temp, &channel_temp, &secondary_channel_temp,
                        &timestamp_temp, &ant_temp, &sig_len_temp, &rx_state_temp, buffer_string);
 
+        if(count != 29){
+            ESP_LOGE(TAG, "incorrect number of columns in the CSV file");
+        }
 
         info.rx_ctrl.rssi = (unsigned int)rssi_temp;
         info.rx_ctrl.rate = (unsigned int)rate_temp;
@@ -2684,8 +2514,9 @@ static void csi_from_file_task()
         }
 
         // put into the queue
-        wifi_csi_info_t *q_data = malloc_or_die(sizeof(wifi_csi_info_t) + info.len);
+        wifi_csi_info_t *q_data = malloc_or_die(sizeof(wifi_csi_info_t));
         *q_data = info;
+        q_data->buf = malloc(info.len);
         memcpy(q_data->buf, info.buf, info.len);
 
         if (!g_csi_info_queue) {
@@ -2694,10 +2525,19 @@ static void csi_from_file_task()
         }
 
         while(xQueueSend(g_csi_info_queue, &q_data, 0) == pdFALSE) {
-            ESP_LOGW(TAG, "g_csi_info_queue full, waiting 10 ms");
             vTaskDelay(10 / portTICK_PERIOD_MS);
         }
         ESP_LOGI(TAG, " sent in queue");
+
+        if(button == 1){ // this works because the queue size is two, so there should usually be one sample before thid so the presses match up
+            ESP_LOGI(TAG, "button");
+            button_pressed = true;
+            button_was_pressed = true;
+
+            // reset timers so that they are synchronized with the reference device
+            previous_fft_timestamp = timestamp_array[current_last_element] - FFT_EVERY_X_SECONDS*SECONDS_TO_MICROSECONDS - 1;
+            previous_mrc_pca_timestamp = timestamp_array[current_last_element] - MRC_PCA_EVERY_X_SECONDS*SECONDS_TO_MICROSECONDS - 1;
+        }
         free(info.buf);
     }
     free(buffer_string);
@@ -2972,19 +2812,24 @@ void app_main(void)
 #endif
 
 
+#ifdef CONFIG_PROCESS_CSI_FROM_FILE
+    g_csi_info_queue = xQueueCreate(1, sizeof(void *));
+#endif
+#ifndef CONFIG_PROCESS_CSI_FROM_FILE
     g_csi_info_queue = xQueueCreate(256, sizeof(void *));
+#endif
+
     if(g_csi_info_queue == 0){
-        ESP_LOGW(TAG, "failed to create csi queue");
+        ESP_LOGE(TAG, "failed to create csi queue");
     }
     buffer_queue = xQueueCreate(10, sizeof(void *));
     if(buffer_queue == 0){
-        ESP_LOGW(TAG, "failed to create buffer queue");
+        ESP_LOGE(TAG, "failed to create buffer queue");
     }
     int result = 0;
     result = xTaskCreate(csi_processing_task, "csi_data_print", 6 * 1024, NULL, 0, NULL);
-    ESP_LOGW(TAG, " csi task result %d", result);
     if(result == 0){
-        ESP_LOGW(TAG, "failed to create csi task");
+        ESP_LOGE(TAG, "failed to create csi task");
     }
 
 #ifdef CONFIG_PROCESS_CSI_FROM_FILE
