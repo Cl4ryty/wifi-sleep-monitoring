@@ -579,7 +579,6 @@ static void udp_calibration_task(void *pvParameters)
     vTaskDelete(NULL);
 }
 
-// -- probably_removable alhtough it might still be nice for debugging
 static void wifi_event_handler(void* arg, esp_event_base_t event_base,
                                     int32_t event_id, void* event_data)
 {
@@ -602,7 +601,20 @@ void analysis_init(void){
     bandpass_filter_initialize(&heart_filter, heart_bandpass_coefficients[0], heart_bandpass_coefficients[1], NUMBER_COEFFICIENTS);
 }
 
-
+/**
+ * @brief Calculates the MRC-PCA ratios for all subcarriers and returns the sum of all ratios to use as scalar. 
+ * 
+ * @param MRC_ratios Pointer to the float array in which the ratios will be stored. 
+ * @param data The 2d array of subcarrier amplitudes used for the calculation. 
+ * @param data_length The number of amplitude samples in the data / length of the first array dimension. 
+ * @param data_current_last_index The index of the current last sample in the data array. 
+ * @param use_last_n_elements The number of samples to use for the calculation. 
+ * @param lower_frequency_bound The lower bound of frequencies to include as the signal, such that lower frequency are considered noise. 
+ * @param upper_frequency_bound The upper bound of frequencies to include as the signal, such that higher frequencies are considered noise. 
+ * @param bandpass_coefficients_b Pointer to a float array of the b coefficients for the bandpass filter used for filtering the signal before PCA. 
+ * @param bandpass_coefficients_a Pointer to a float array of the a coefficients for the bandpass filter used for filtering the signal before PCA. 
+ * @return float The sum of all individual subcarrier ratios, used to scale them such that new coefficients don't cause a jump in the amplitude. 
+ */
 float mrc_pca(float *MRC_ratios, float data[][NUMBER_SUBCARRIERS], int data_length, int data_current_last_index, int use_last_n_elements, float lower_frequency_bound, float upper_frequency_bound, float *bandpass_coefficients_b, float *bandpass_coefficients_a){
     // calculate psd
 
@@ -692,6 +704,15 @@ float mrc_pca(float *MRC_ratios, float data[][NUMBER_SUBCARRIERS], int data_leng
     return MRC_scalar;
 }
 
+/**
+ * @brief Estimate the rate based on the peak frequency after FFT. 
+ * 
+ * @param data Pointer to float array containing the data for which to estimate the rate. 
+ * @param data_length Length of the data array. 
+ * @param data_current_last_index Index of the current last element in data array to deal with circular arrays. 
+ * @param use_last_n_elements The number of elements to use for the rate estimation. Has to be a power of 2.
+ * @return float The estimated rate. 
+ */
 float fft_rate_estimation(float *data, int data_length, int data_current_last_index, int use_last_n_elements){
     // Create the FFT config structure
     fft_config_t *real_fft_plan = fft_init(use_last_n_elements, FFT_REAL, FFT_FORWARD, NULL, NULL);
@@ -750,7 +771,15 @@ float fft_rate_estimation(float *data, int data_length, int data_current_last_in
     return max_frequency*60;
 }
 
-
+/**
+ * @brief Performs variance-based subcarrier selection. 
+ * 
+ * @param data The 2d data array based on which the subcarrier selection is performed. 
+ * @param data_length The number of samples in the data array / length of the first array dimension. 
+ * @param data_current_last_index The index of the current last element in the data array. 
+ * @param data_current_first_index The index of the current first element in the data array. 
+ * @param subcarrier_means The array of the DumbRunningMeans for all subcarriers. 
+ */
 void variance_based_subcarrier_selection(float data[][NUMBER_SUBCARRIERS], int data_length, int data_current_last_index, int data_current_first_index, DumbRunningMean subcarrier_means[NUMBER_SUBCARRIERS]){
     // get the amplitudes for each subcarrier and calculate the variance
 
