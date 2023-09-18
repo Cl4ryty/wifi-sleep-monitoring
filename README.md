@@ -1,7 +1,6 @@
 # bachelor-thesis
 > [!WARNING]
-> This repository will be archived once the thesis is completeda and no further changes will be made after that point. Further development of the sleep monitoring system will take place in [this repository](TODO). 
-
+> This repository will be archived once the thesis is completed and no further changes will be made after that point. Further development of the sleep monitoring system will take place in [this forked repository](TODO). 
 
 This is the repository for the thesis ["Towards Real-world Wireless Sensing on the Edge: CSI-based Sleep Measurements with ESP32 Devices"](./writing/Thesis_Final_Digital.pdf). 
 It contains the code for the online, on-device sleep monitoring system developed to be run on ESP32 devices as well as code for the data processing and analysis, and all figures and data used in the thesis. 
