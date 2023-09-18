@@ -6,7 +6,7 @@
 This is the repository for the thesis ["Towards Real-world Wireless Sensing on the Edge: CSI-based Sleep Measurements with ESP32 Devices"](TODO). 
 It contains the code for the online, on-device sleep monitoring system developed to be run on ESP32 devices as well as code for the data processing and analysis, and all figures and data used in the thesis. 
 
-The following image provides an overview of the designed system. For a detailed description and theoretical background of the individual components, refer the [thesis](), and see the [receiver code](csi_receiver/) for the implementation. 
+The following image provides an overview of the designed system. For a detailed description and theoretical background of the individual components, refer the [thesis](), and see the [receiver code](code/csi_receiver/) for the implementation. 
 ![System overview](./writing/final_figures/System_overview.png)
 
 
