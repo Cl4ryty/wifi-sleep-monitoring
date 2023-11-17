@@ -1,5 +1,5 @@
-# bachelor-thesis
-This is the active repository for sleep monitoring system from the thesis ["Towards Real-world Wireless Sensing on the Edge: CSI-based Sleep Measurements with ESP32 Devices"](./writing/Thesis_Final_Digital.pdf). All potential further development of the system will take place here, for the material of the thesis and the original code refer to [this other repository](https://github.com/Cl4ryty/bachelor-thesis/tree/main). 
+# Wi-Fi based sleep monitoring with ESP32
+This is the active repository for sleep monitoring system from the thesis ["Towards Real-world Wireless Sensing on the Edge: CSI-based Sleep Measurements with ESP32 Devices"](./writing/Thesis_Final_Digital.pdf). All further development of the system will take place here, for the material of the thesis and the original code refer to [this other repository](https://github.com/Cl4ryty/bachelor-thesis/tree/main). 
 It contains the code for the online, on-device sleep monitoring system developed to be run on ESP32 devices as well as code for the data processing and analysis, and all figures and data used in the thesis. 
 
 The following image provides an overview of the designed system. For a detailed description and theoretical background of the individual components, refer the [thesis](./writing/Thesis_Final_Digital.pdf), and see the [receiver code](code/csi_receiver/) for the implementation. 
